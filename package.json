@@ -1,6 +1,6 @@
 {
   "name": "bilibili-music-player",
-  "version": "0.1.14",
+  "version": "0.1.20",
   "description": "BiliWave PC desktop music player prototype for Bilibili music discovery.",
   "author": "BiliWave",
   "private": true,
@@ -21,6 +21,7 @@
     "check:api-port-status": "node scripts/checkApiPortStatus.cjs",
     "check:dev-server-config": "node scripts/checkDevServerConfig.cjs",
     "check:search-resilience": "node scripts/checkSearchResilience.cjs",
+    "check:lyrics": "node scripts/checkLyrics.mjs",
     "check:preferences": "node scripts/checkPreferences.mjs",
     "check:queue": "node scripts/checkQueueLogic.mjs",
     "preview": "vite preview --host 127.0.0.1"

@@ -40,6 +40,7 @@ import {
 } from 'lucide-react';
 import './styles.css';
 import { clearSearchCache, getMusicProviders, searchBilibiliMusic } from './services/bilibiliMusic.js';
+import { createLyricEntry, getActiveLyricIndex, getLyricPreview } from './services/lyrics.js';
 import {
   clearPreferenceData,
   createDefaultPreferences,
@@ -55,8 +56,11 @@ import {
   appendUniqueTracks,
   canPlayFromQueue,
   canPlayInApp,
+  getCurrentBilibiliPartIndex,
+  getNextBilibiliPart,
   getNextQueueTrack,
   getPreviousQueueTrack,
+  getRandomQueueTrack,
   moveQueueTrack,
   prependNewTrack
 } from './services/queueLogic.js';
@@ -76,10 +80,10 @@ const maxSearchLimit = 100;
 const virtualTrackRowHeight = 79;
 const virtualQueueRowHeight = 74;
 const playbackPreferenceSaveIntervalMs = 10_000;
-const bilibiliAudibleStartupCheckMs = 700;
-const bilibiliAudibleWatchdogMs = 4_000;
-const bilibiliAudibleStartupAttempts = 10;
-const bilibiliAudibleWatchdogMisses = 2;
+const bilibiliAudibleStartupCheckMs = 1_000;
+const bilibiliAudibleWatchdogMs = 8_000;
+const bilibiliAudibleStartupAttempts = 24;
+const bilibiliAudibleWatchdogMisses = 4;
 const desktopApi = typeof window !== 'undefined' ? window.biliwaveDesktop : null;
 const fallbackCover =
   'data:image/svg+xml;utf8,' +
@@ -97,7 +101,7 @@ function getCoverSrc(track) {
 }
 
 function getTrackBaseId(track) {
-  return String(track?.parentId || track?.id || '').replace(/-p\d+$/i, '');
+  return String(track?.parentId || track?.id || '').replace(/-p\d+(?:-[^-]+)?$/i, '');
 }
 
 function withBilibiliPageUrl(sourceUrl, page) {
@@ -134,7 +138,8 @@ function createBilibiliPartTrack(track, part) {
     rawCover: part?.rawCover || track.rawCover,
     duration: part?.duration || track.duration,
     durationSeconds: part?.durationSeconds || track.durationSeconds,
-    sourceUrl
+    sourceUrl,
+    isCollectionPart: Boolean(part?.isCollectionPart)
   };
 }
 
@@ -144,6 +149,18 @@ function formatTime(seconds) {
   const minutes = Math.floor(safeSeconds / 60).toString().padStart(2, '0');
   const rest = (safeSeconds % 60).toString().padStart(2, '0');
   return `${minutes}:${rest}`;
+}
+
+function formatLyricOffset(offsetMs = 0) {
+  const seconds = (Number(offsetMs) || 0) / 1000;
+  if (seconds === 0) return '0.0s';
+  return `${seconds > 0 ? '+' : ''}${seconds.toFixed(1)}s`;
+}
+
+function clampLyricOffset(offsetMs) {
+  const numberValue = Number(offsetMs);
+  if (!Number.isFinite(numberValue)) return 0;
+  return Math.min(30_000, Math.max(-30_000, Math.round(numberValue)));
 }
 
 function getRestoredPlayback(track, playbackState) {
@@ -258,6 +275,7 @@ function getClearDataStatusText(dataType) {
   if (dataType === 'playlists') return '所有歌单已重置';
   if (dataType === 'queue') return '播放队列已清空';
   if (dataType === 'playback') return '当前播放状态已清空';
+  if (dataType === 'lyrics') return '本地歌词已清空';
   return '本地数据已更新';
 }
 
@@ -336,6 +354,10 @@ function App() {
         : '等待选择 B站音频'
   }, []);
   const [isBilibiliAudioAudible, setIsBilibiliAudioAudible] = React.useState(false);
+  const [lyricsByTrackId, setLyricsByTrackId] = React.useState(savedPreferences.lyricsByTrackId);
+  const [isLyricsPanelOpen, setIsLyricsPanelOpen] = React.useState(false);
+  const [lyricDraft, setLyricDraft] = React.useState('');
+  const [lyricStatus, setLyricStatus] = React.useState('');
   const [appInfo, setAppInfo] = React.useState({
     name: 'BiliWave',
     version: 'Web 调试',
@@ -356,11 +378,16 @@ function App() {
   });
   const audioRef = React.useRef(null);
   const importFileInputRef = React.useRef(null);
+  const lyricFileInputRef = React.useRef(null);
   const workspaceRef = React.useRef(null);
   const bilibiliPlaybackStartedAtRef = React.useRef(null);
   const bilibiliAutoReconnectRef = React.useRef({
     trackId: '',
     attempted: false
+  });
+  const bilibiliAutoAdvanceRef = React.useRef({
+    trackId: '',
+    completedAt: 0
   });
   const isDesktopApp = Boolean(desktopApi?.isDesktop);
   const playbackState = React.useMemo(
@@ -372,6 +399,17 @@ function App() {
   );
   const currentTime = currentTrack?.externalOnly ? bilibiliPlaybackTime : nativePlaybackTime;
   const durationSeconds = currentTrack?.externalOnly ? currentTrack?.durationSeconds || 0 : nativeDuration || currentTrack?.durationSeconds || 0;
+  const currentLyricEntry = React.useMemo(() => {
+    if (!currentTrack) return null;
+    if (lyricsByTrackId[currentTrack.id]) return lyricsByTrackId[currentTrack.id];
+    if (currentTrack.lyric) return createLyricEntry(currentTrack.lyric, { source: 'embedded' });
+    return null;
+  }, [currentTrack, lyricsByTrackId]);
+  const activeLyricIndex = React.useMemo(
+    () => getActiveLyricIndex(currentLyricEntry, currentTime),
+    [currentLyricEntry, currentTime]
+  );
+  const lyricPreview = React.useMemo(() => getLyricPreview(currentLyricEntry, 4), [currentLyricEntry]);
   const desktopPlaybackState = React.useMemo(
     () => createDesktopPlaybackState(currentTrack, { currentTime, durationSeconds, isPlaying, statusText }),
     [currentTime, currentTrack, durationSeconds, isPlaying, statusText]
@@ -388,11 +426,12 @@ function App() {
       desktopSettings,
       currentTrack,
       playbackState,
+      lyricsByTrackId,
       query,
       sort,
       duration
     }),
-    [currentTrack, desktopSettings, duration, history, mode, playbackState, playlists, query, queue, selectedPlaylistId, selectedProvider, sort, volume]
+    [currentTrack, desktopSettings, duration, history, lyricsByTrackId, mode, playbackState, playlists, query, queue, selectedPlaylistId, selectedProvider, sort, volume]
   );
   const immediatePreferencesKey = React.useMemo(
     () =>
@@ -406,11 +445,12 @@ function App() {
         selectedPlaylistId,
         desktopSettings,
         currentTrack,
+        lyricsByTrackId,
         query,
         sort,
         duration
       }),
-    [currentTrack, desktopSettings, duration, history, mode, playlists, query, queue, selectedPlaylistId, selectedProvider, sort, volume]
+    [currentTrack, desktopSettings, duration, history, lyricsByTrackId, mode, playlists, query, queue, selectedPlaylistId, selectedProvider, sort, volume]
   );
   const latestPreferencesRef = React.useRef(currentPreferences);
   const preferencesSaveRef = React.useRef({
@@ -418,6 +458,7 @@ function App() {
     lastPlaybackSavedAt: 0,
     timeoutId: null
   });
+  const stablePlayNextBilibiliItem = useStableEvent(playNextBilibiliItem);
 
   const updateBilibiliAudioStatus = React.useCallback((phase, message) => {
     setBilibiliAudioStatus({
@@ -569,6 +610,12 @@ function App() {
     preserveRestoreStatusRef.current = false;
     performSearch(query, { preserveStatus });
   }, [selectedProvider]);
+
+  React.useEffect(() => {
+    if (!isLyricsPanelOpen) return;
+    setLyricDraft(currentLyricEntry?.raw || currentTrack?.lyric || '');
+    setLyricStatus(currentTrack ? (currentLyricEntry ? '已切换到当前歌曲歌词' : '当前歌曲还没有歌词') : '请先选择一首歌曲');
+  }, [currentTrack?.id, isLyricsPanelOpen]);
 
   React.useEffect(() => {
     latestPreferencesRef.current = currentPreferences;
@@ -825,15 +872,28 @@ function App() {
       const startedAt = bilibiliPlaybackStartedAtRef.current;
       if (!startedAt) return;
       const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-      const maxSeconds = bilibiliAudioTrack.durationSeconds || elapsedSeconds;
+      const maxSeconds = Number(bilibiliAudioTrack.durationSeconds) || elapsedSeconds;
       setBilibiliPlaybackTime((currentValue) => {
         const nextValue = Math.min(elapsedSeconds, maxSeconds);
         return nextValue === currentValue ? currentValue : nextValue;
       });
+
+      if (maxSeconds > 0 && elapsedSeconds >= maxSeconds) {
+        const autoAdvanceState = bilibiliAutoAdvanceRef.current;
+        if (autoAdvanceState.trackId !== bilibiliAudioTrack.id || Date.now() - autoAdvanceState.completedAt > 2500) {
+          bilibiliAutoAdvanceRef.current = {
+            trackId: bilibiliAudioTrack.id,
+            completedAt: Date.now()
+          };
+          setBilibiliPlaybackTime(maxSeconds);
+          setProgress(0);
+          stablePlayNextBilibiliItem(bilibiliAudioTrack);
+        }
+      }
     }, 1000);
 
     return () => window.clearInterval(intervalId);
-  }, [bilibiliAudioTrack, bilibiliPlayerRevision, isBilibiliAudioAudible, isPlaying]);
+  }, [bilibiliAudioTrack, bilibiliPlayerRevision, isBilibiliAudioAudible, isPlaying, stablePlayNextBilibiliItem]);
 
   React.useEffect(() => {
     if (!currentTrack?.externalOnly || !isPlaying || !bilibiliAudioTrack) {
@@ -852,35 +912,13 @@ function App() {
     let intervalId;
     let watchdogIntervalId;
     let hasReportedPlaying = false;
+    let hasReportedStartupWait = false;
+    let hasReportedAudibleLoss = false;
 
-    const reconnectAfterAudibleLoss = () => {
-      const reconnectState = bilibiliAutoReconnectRef.current;
-      const canAutoReconnect = reconnectState.trackId === bilibiliAudioTrack.id && reconnectState.attempted === false;
-
+    const reportWaitingForAudibleOutput = (message) => {
       setIsBilibiliAudioAudible(false);
-      if (watchdogIntervalId) {
-        window.clearInterval(watchdogIntervalId);
-        watchdogIntervalId = null;
-      }
-
-      if (canAutoReconnect) {
-        bilibiliAutoReconnectRef.current = {
-          trackId: bilibiliAudioTrack.id,
-          attempted: true
-        };
-        setBilibiliSeekTime(bilibiliPlaybackTime);
-        setBilibiliPlayerRevision((revision) => revision + 1);
-        updateBilibiliAudioStatus('reconnecting', `B站音频中断，正在自动重连：${bilibiliAudioTrack.title}`);
-        setStatusText(`B站音频中断，正在自动重连：${bilibiliAudioTrack.title}`);
-        return;
-      }
-
-      setIsPlaying(false);
-      updateBilibiliAudioStatus(
-        'error',
-        `B站音频中断，自动重连未恢复，请手动重新连接或打开原视频：${bilibiliAudioTrack.title}`
-      );
-      setStatusText(`B站音频中断，请重新连接：${bilibiliAudioTrack.title}`);
+      updateBilibiliAudioStatus('slow', message);
+      setStatusText(message);
     };
 
     const checkAudibleState = async (mode = 'startup') => {
@@ -892,6 +930,7 @@ function App() {
         if (audibleState?.audible) {
           setIsBilibiliAudioAudible(true);
           missedAudibleChecks = 0;
+          hasReportedAudibleLoss = false;
           if (!hasReportedPlaying) {
             hasReportedPlaying = true;
             updateBilibiliAudioStatus('playing', `B站官方播放器正在输出声音：${bilibiliAudioTrack.title}`);
@@ -913,14 +952,21 @@ function App() {
       if (mode === 'watchdog') {
         missedAudibleChecks += 1;
         if (missedAudibleChecks >= bilibiliAudibleWatchdogMisses) {
-          reconnectAfterAudibleLoss();
+          if (!hasReportedAudibleLoss) {
+            hasReportedAudibleLoss = true;
+            reportWaitingForAudibleOutput(
+              `暂时未检测到 B站播放器声音，已保持连接，可重新连接或打开原视频：${bilibiliAudioTrack.title}`
+            );
+          }
         }
         return;
       }
 
-      if (attempts >= bilibiliAudibleStartupAttempts) {
-        setIsBilibiliAudioAudible(false);
-        reconnectAfterAudibleLoss();
+      if (attempts >= bilibiliAudibleStartupAttempts && !hasReportedStartupWait) {
+        hasReportedStartupWait = true;
+        reportWaitingForAudibleOutput(
+          `B站官方播放器已加载较久但暂未检测到声音，仍在保持连接：${bilibiliAudioTrack.title}`
+        );
       }
     };
 
@@ -933,7 +979,7 @@ function App() {
       if (intervalId) window.clearInterval(intervalId);
       if (watchdogIntervalId) window.clearInterval(watchdogIntervalId);
     };
-  }, [bilibiliAudioTrack, bilibiliPlaybackTime, currentTrack, isPlaying, updateBilibiliAudioStatus]);
+  }, [bilibiliAudioTrack, currentTrack, isPlaying, updateBilibiliAudioStatus]);
 
   React.useEffect(() => {
     if (!desktopApi?.onMediaCommand) return undefined;
@@ -989,6 +1035,18 @@ function App() {
     setStatusText(`已从${sourceName}加入 ${additions.length} 首到播放队列`);
   }
 
+  function getPlaybackStarterTrack(tracks) {
+    const playableTracks = Array.isArray(tracks) ? tracks.filter(canPlayFromQueue) : [];
+    if (playableTracks.length === 0) return null;
+    if (mode === 'shuffle') {
+      return getRandomQueueTrack({
+        currentTrack: null,
+        queue: playableTracks
+      });
+    }
+    return playableTracks[0];
+  }
+
   async function playTrackCollection(tracks, sourceName = '列表') {
     const playableTracks = Array.isArray(tracks) ? tracks.filter(canPlayFromQueue) : [];
     if (playableTracks.length === 0) {
@@ -997,7 +1055,7 @@ function App() {
     }
 
     setQueue((items) => appendUniqueTracks(items, playableTracks));
-    await playTrack(playableTracks[0]);
+    await playTrack(getPlaybackStarterTrack(playableTracks));
   }
 
   async function playTrack(track) {
@@ -1073,8 +1131,14 @@ function App() {
   }
 
   function togglePlay() {
-    if (!currentTrack && results.length > 0) {
-      playTrack(results[0]);
+    if (!currentTrack) {
+      const starterTrack = getPlaybackStarterTrack(queue.length > 0 ? queue : visibleResults);
+      if (starterTrack) {
+        if (queue.length === 0) {
+          setQueue((items) => appendUniqueTracks(items, visibleResults.filter(canPlayFromQueue)));
+        }
+        playTrack(starterTrack);
+      }
       return;
     }
     if (!canPlayInApp(currentTrack)) {
@@ -1103,6 +1167,22 @@ function App() {
     if (queue.length === 0) return;
     const previousTrack = getPreviousQueueTrack({ currentTrack, queue });
     playTrack(previousTrack);
+  }
+
+  function playNextBilibiliItem(track = currentTrack) {
+    if (!track?.externalOnly) {
+      playNext();
+      return;
+    }
+
+    const nextPart = getNextBilibiliPart(track);
+
+    if (nextPart) {
+      playBilibiliPart(nextPart);
+      return;
+    }
+
+    playNext();
   }
 
   function removeFromQueue(trackId) {
@@ -1168,6 +1248,122 @@ function App() {
     });
   }
 
+  function openLyricsPanel() {
+    if (!currentTrack) {
+      setStatusText('请先选择一首歌曲再打开歌词');
+      return;
+    }
+
+    setLyricDraft(currentLyricEntry?.raw || currentTrack.lyric || '');
+    setLyricStatus(currentLyricEntry ? '已加载当前歌曲歌词' : '可导入 LRC 或粘贴歌词');
+    setIsLyricsPanelOpen(true);
+  }
+
+  function toggleLyricsPanel() {
+    if (isLyricsPanelOpen) {
+      setIsLyricsPanelOpen(false);
+      return;
+    }
+    openLyricsPanel();
+  }
+
+  function saveCurrentLyricDraft() {
+    if (!currentTrack) {
+      setLyricStatus('请先选择一首歌曲');
+      return;
+    }
+
+    const entry = createLyricEntry(lyricDraft, {
+      source: 'manual',
+      offsetMs: currentLyricEntry?.offsetMs || 0
+    });
+
+    if (!entry.raw || entry.lines.length === 0) {
+      setLyricStatus('歌词内容为空，无法保存');
+      return;
+    }
+
+    setLyricsByTrackId((items) => ({
+      ...items,
+      [currentTrack.id]: entry
+    }));
+    const message = entry.type === 'lrc' ? `已保存滚动歌词：${currentTrack.title}` : `已保存文本歌词：${currentTrack.title}`;
+    setLyricStatus(message);
+    setStatusText(message);
+  }
+
+  function clearCurrentLyrics() {
+    if (!currentTrack) return;
+
+    setLyricsByTrackId((items) => {
+      const nextItems = { ...items };
+      delete nextItems[currentTrack.id];
+      return nextItems;
+    });
+    setLyricDraft('');
+    setLyricStatus('已清空当前歌曲歌词');
+    setStatusText(`已清空歌词：${currentTrack.title}`);
+  }
+
+  function updateCurrentLyricOffset(nextOffsetMs) {
+    if (!currentTrack || !currentLyricEntry) {
+      setLyricStatus('当前歌曲还没有可调整的歌词');
+      return;
+    }
+
+    const offsetMs = clampLyricOffset(nextOffsetMs);
+    setLyricsByTrackId((items) => ({
+      ...items,
+      [currentTrack.id]: {
+        ...currentLyricEntry,
+        offsetMs,
+        updatedAt: new Date().toISOString()
+      }
+    }));
+    setLyricStatus(`歌词时间偏移已调整为 ${formatLyricOffset(offsetMs)}`);
+  }
+
+  function openLyricFilePicker() {
+    if (!currentTrack) {
+      setStatusText('请先选择一首歌曲再导入歌词');
+      return;
+    }
+    lyricFileInputRef.current?.click();
+  }
+
+  async function handleLyricFileChange(event) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !currentTrack) return;
+
+    try {
+      const content = await file.text();
+      const entry = createLyricEntry(content, {
+        source: file.name.toLowerCase().endsWith('.lrc') ? 'local-lrc' : 'local-text',
+        offsetMs: currentLyricEntry?.offsetMs || 0
+      });
+
+      if (!entry.raw || entry.lines.length === 0) {
+        setLyricStatus('导入文件没有可用歌词内容');
+        return;
+      }
+
+      setLyricsByTrackId((items) => ({
+        ...items,
+        [currentTrack.id]: entry
+      }));
+      setLyricDraft(entry.raw);
+      setIsLyricsPanelOpen(true);
+      const message = `已导入歌词：${file.name}`;
+      setLyricStatus(message);
+      setStatusText(message);
+    } catch (error) {
+      const message = error.message || '歌词导入失败';
+      setLyricStatus(message);
+      setStatusText(message);
+    }
+  }
+
   function updateDesktopSetting(key, value) {
     setDesktopSettings((settings) => ({
       ...settings,
@@ -1204,6 +1400,7 @@ function App() {
     setSelectedPlaylistId(preferences.selectedPlaylistId);
     setDesktopSettings(preferences.desktopSettings);
     setCurrentTrack(preferences.currentTrack);
+    setLyricsByTrackId(preferences.lyricsByTrackId);
     setQuery(preferences.query);
     setSort(preferences.sort);
     setDuration(preferences.duration);
@@ -1396,6 +1593,10 @@ function App() {
         attempted: false
       };
     }
+    bilibiliAutoAdvanceRef.current = {
+      trackId: '',
+      completedAt: 0
+    };
     setIsBilibiliAudioAudible(false);
     setBilibiliPlaybackTime(nextSeekTime);
     setBilibiliSeekTime(nextSeekTime);
@@ -1413,6 +1614,10 @@ function App() {
     bilibiliAutoReconnectRef.current = {
       trackId: '',
       attempted: false
+    };
+    bilibiliAutoAdvanceRef.current = {
+      trackId: '',
+      completedAt: 0
     };
     setIsBilibiliAudioAudible(false);
     setBilibiliPlaybackTime(0);
@@ -1970,8 +2175,13 @@ function App() {
                 <div className="lyrics-heading">
                   <Mic2 size={16} />
                   <span>歌词预览</span>
+                  {currentLyricEntry && <em>{currentLyricEntry.type === 'lrc' ? '滚动' : '文本'}</em>}
                 </div>
-                <p>{currentTrack?.lyric || '暂未匹配歌词，后续可接入第三方歌词服务或本地 LRC。'}</p>
+                <p>{lyricPreview || '暂未匹配歌词，可导入 LRC 或粘贴歌词。'}</p>
+                <button className="text-button mini" disabled={!currentTrack} onClick={openLyricsPanel} type="button">
+                  <Mic2 size={13} />
+                  <span>{currentLyricEntry ? '查看歌词' : '添加歌词'}</span>
+                </button>
               </div>
 
               {currentTrack?.externalOnly && (
@@ -2082,7 +2292,13 @@ function App() {
                 <Disc3 size={17} />
               </button>
             )}
-            <button className="icon-button" type="button" title="歌词">
+            <button
+              className={isLyricsPanelOpen ? 'icon-button active' : 'icon-button'}
+              disabled={!currentTrack}
+              onClick={toggleLyricsPanel}
+              type="button"
+              title={isLyricsPanelOpen ? '关闭歌词' : '打开歌词'}
+            >
               <Mic2 size={17} />
             </button>
           </div>
@@ -2121,6 +2337,22 @@ function App() {
           onStop={stopBilibiliAudio}
         />
       )}
+      {isLyricsPanelOpen && (
+        <LyricsPanel
+          activeIndex={activeLyricIndex}
+          currentTime={currentTime}
+          draft={lyricDraft}
+          entry={currentLyricEntry}
+          status={lyricStatus}
+          track={currentTrack}
+          onChangeDraft={setLyricDraft}
+          onClear={clearCurrentLyrics}
+          onClose={() => setIsLyricsPanelOpen(false)}
+          onImport={openLyricFilePicker}
+          onOffsetChange={updateCurrentLyricOffset}
+          onSave={saveCurrentLyricDraft}
+        />
+      )}
       <input
         ref={importFileInputRef}
         accept="application/json,.json"
@@ -2128,9 +2360,139 @@ function App() {
         onChange={handleImportFileChange}
         type="file"
       />
+      <input
+        ref={lyricFileInputRef}
+        accept=".lrc,.txt,text/plain"
+        className="visually-hidden"
+        onChange={handleLyricFileChange}
+        type="file"
+      />
         </div>
       )}
     </>
+  );
+}
+
+function LyricsPanel({
+  activeIndex,
+  currentTime,
+  draft,
+  entry,
+  status,
+  track,
+  onChangeDraft,
+  onClear,
+  onClose,
+  onImport,
+  onOffsetChange,
+  onSave
+}) {
+  const activeLineRef = React.useRef(null);
+  const lines = Array.isArray(entry?.lines) ? entry.lines : [];
+  const hasTimedLyrics = entry?.type === 'lrc';
+  const hasLyrics = lines.length > 0;
+  const offsetMs = entry?.offsetMs || 0;
+
+  React.useEffect(() => {
+    if (!activeLineRef.current) return;
+    activeLineRef.current.scrollIntoView({
+      block: 'center',
+      behavior: 'smooth'
+    });
+  }, [activeIndex, track?.id]);
+
+  return (
+    <div className="player-modal lyrics-drawer" role="dialog" aria-modal="false" aria-label="歌词">
+      <div className="player-modal-panel lyrics-panel">
+        <div className="player-modal-head">
+          <div>
+            <span>歌词</span>
+            <strong>{track?.title || '未选择歌曲'}</strong>
+          </div>
+          <div className="player-modal-actions">
+            <button className="text-button" onClick={onImport} type="button" disabled={!track}>
+              <Upload size={15} />
+              <span>导入 LRC</span>
+            </button>
+            <button className="icon-button small" onClick={onClose} type="button" title="关闭歌词">
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+
+        <section className="lyrics-panel-body">
+          <div className="lyrics-live">
+            <div className="lyrics-live-head">
+              <div>
+                <strong>{hasTimedLyrics ? '滚动歌词' : '文本歌词'}</strong>
+                <span>{hasTimedLyrics ? `当前 ${formatTime(currentTime)}` : '无时间轴时按文本展示'}</span>
+              </div>
+              <em>{hasTimedLyrics ? `偏移 ${formatLyricOffset(offsetMs)}` : '静态'}</em>
+            </div>
+
+            {hasLyrics ? (
+              <div className={hasTimedLyrics ? 'lyrics-lines' : 'lyrics-lines plain'}>
+                {lines.map((line, index) => (
+                  <div
+                    className={hasTimedLyrics && index === activeIndex ? 'lyric-line active' : 'lyric-line'}
+                    key={line.id || `${line.time}-${index}`}
+                    ref={hasTimedLyrics && index === activeIndex ? activeLineRef : null}
+                  >
+                    {hasTimedLyrics && <span>{formatTime(line.time)}</span>}
+                    <p>{line.text}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="lyrics-empty">
+                <Mic2 size={28} />
+                <strong>还没有歌词</strong>
+                <p>导入本地 LRC，或在右侧粘贴歌词后保存。</p>
+              </div>
+            )}
+
+            <div className="lyrics-offset-controls">
+              <button className="text-button bordered" disabled={!hasTimedLyrics} onClick={() => onOffsetChange(offsetMs - 500)} type="button">
+                -0.5s
+              </button>
+              <button className="text-button bordered" disabled={!hasTimedLyrics} onClick={() => onOffsetChange(0)} type="button">
+                重置
+              </button>
+              <button className="text-button bordered" disabled={!hasTimedLyrics} onClick={() => onOffsetChange(offsetMs + 500)} type="button">
+                +0.5s
+              </button>
+            </div>
+          </div>
+
+          <div className="lyrics-editor">
+            <div className="lyrics-editor-head">
+              <strong>粘贴歌词</strong>
+              <span>LRC 会自动同步，普通文本会作为静态歌词保存。</span>
+            </div>
+            <textarea
+              value={draft}
+              onChange={(event) => onChangeDraft(event.target.value)}
+              placeholder={'[00:12.34]第一句歌词\n[00:18.20]第二句歌词'}
+            />
+            <div className="lyrics-editor-actions">
+              <button className="primary-button" disabled={!track} onClick={onSave} type="button">
+                <Mic2 size={15} />
+                <span>保存歌词</span>
+              </button>
+              <button className="text-button bordered" disabled={!track} onClick={onImport} type="button">
+                <Upload size={15} />
+                <span>导入文件</span>
+              </button>
+              <button className="text-button danger" disabled={!track || !entry} onClick={onClear} type="button">
+                <Trash2 size={14} />
+                <span>清空</span>
+              </button>
+            </div>
+            {status && <p className="lyrics-status">{status}</p>}
+          </div>
+        </section>
+      </div>
+    </div>
   );
 }
 
@@ -2149,7 +2511,7 @@ function getBilibiliEmbedUrl(track, revision = 0, seekTime = 0) {
     params.set('aid', String(track.aid).replace(/^av/i, ''));
   }
 
-  if (track?.page && Number(track.page) > 1) {
+  if (!track?.isCollectionPart && track?.page && Number(track.page) > 1) {
     params.set('p', String(track.page));
   }
 
@@ -2174,10 +2536,10 @@ function BilibiliAudioSource({ isPlaying, onError, onReady, onSlow, track, revis
     clearBilibiliSourceTimers(timersRef.current);
     timersRef.current.slowTimer = window.setTimeout(() => {
       onSlow?.(track);
-    }, 4500);
+    }, 8000);
     timersRef.current.errorTimer = window.setTimeout(() => {
       onError?.(track);
-    }, 18000);
+    }, 45000);
 
     return () => {
       clearBilibiliSourceTimers(timersRef.current);
@@ -2309,7 +2671,19 @@ function BilibiliPlayerModal({ isPlaying, status, track, onClose, onOpenSource, 
 function BilibiliPartList({ className = '', onPlayPart, track }) {
   const parts = Array.isArray(track?.parts) ? track.parts : [];
   const hasParts = parts.length > 1;
+  const activePartIndex = getCurrentBilibiliPartIndex(track);
+  const activePart = activePartIndex >= 0 ? parts[activePartIndex] : null;
+  const currentPage = Number(activePart?.page || track?.page || 1);
+  const activePartRef = React.useRef(null);
   const panelClassName = className ? `bilibili-part-panel ${className}` : 'bilibili-part-panel';
+
+  React.useEffect(() => {
+    if (!hasParts || !activePartRef.current) return;
+    activePartRef.current.scrollIntoView({
+      block: 'center',
+      behavior: 'smooth'
+    });
+  }, [activePartIndex, currentPage, hasParts, track?.cid, track?.id, track?.title]);
 
   if (!track?.externalOnly) return null;
 
@@ -2317,22 +2691,27 @@ function BilibiliPartList({ className = '', onPlayPart, track }) {
     <section className={panelClassName} aria-label="视频选集">
       <div className="part-panel-head">
         <strong>视频选集</strong>
-        <span>{hasParts ? `${track.page || 1}/${parts.length}` : '无选集'}</span>
+        <span>{hasParts ? `当前 ${activePartIndex >= 0 ? activePartIndex + 1 : currentPage}/${parts.length}` : '无选集'}</span>
       </div>
       {hasParts ? (
         <div className="part-list">
-          {parts.map((part) => (
-            <button
-              className={Number(track.page || 1) === Number(part.page) ? 'part-item active' : 'part-item'}
-              key={`${part.page}-${part.cid || part.title}`}
-              onClick={() => onPlayPart(part)}
-              type="button"
-            >
-              <span>{String(part.page).padStart(2, '0')}</span>
-              <strong>{part.title}</strong>
-              <em>{part.duration}</em>
-            </button>
-          ))}
+          {parts.map((part, index) => {
+            const isActive = index === activePartIndex;
+
+            return (
+              <button
+                className={isActive ? 'part-item active' : 'part-item'}
+                key={`${part.page}-${part.cid || part.title}`}
+                onClick={() => onPlayPart(part)}
+                ref={isActive ? activePartRef : null}
+                type="button"
+              >
+                <span>{String(part.page).padStart(2, '0')}</span>
+                <strong>{part.title}</strong>
+                <em>{part.duration}</em>
+              </button>
+            );
+          })}
         </div>
       ) : (
         <p className="part-empty">当前视频没有返回分 P 或合集列表。</p>
@@ -2438,6 +2817,10 @@ function SettingsPanel({
           <button className="text-button bordered" onClick={() => onClearData('playback')} type="button">
             <Database size={14} />
             <span>清空当前播放</span>
+          </button>
+          <button className="text-button bordered" onClick={() => onClearData('lyrics')} type="button">
+            <Mic2 size={14} />
+            <span>清空歌词</span>
           </button>
           <button className="text-button danger" onClick={() => onClearData('playlists')} type="button">
             <Trash2 size={14} />
@@ -2643,10 +3026,10 @@ const TrackRow = React.memo(function TrackRow({ currentTrackId, favoriteTrackIds
         className={canPlayInApp(track) ? 'track-index' : 'track-index external'}
         onClick={() => onPlay(track)}
         type="button"
-        title={canPlayInApp(track) ? '播放' : '音频模式'}
+        title={canPlayInApp(track) ? '播放' : '播放 B站音频'}
       >
         <span>{String(index + 1).padStart(2, '0')}</span>
-        {canPlayInApp(track) ? <Play size={16} /> : <ExternalLink size={15} />}
+        <Play size={16} />
       </button>
       <img alt={track.title} loading="lazy" onError={handleImageError} src={getCoverSrc(track)} />
       <div className="track-title">
@@ -2781,10 +3164,10 @@ const PlaylistTrackRow = React.memo(function PlaylistTrackRow({ currentTrackId, 
         className={canPlayInApp(track) ? 'track-index' : 'track-index external'}
         onClick={() => onPlay(track)}
         type="button"
-        title={canPlayInApp(track) ? '播放' : '音频模式'}
+        title={canPlayInApp(track) ? '播放' : '播放 B站音频'}
       >
         <span>{String(index + 1).padStart(2, '0')}</span>
-        {canPlayInApp(track) ? <Play size={16} /> : <ExternalLink size={15} />}
+        <Play size={16} />
       </button>
       <img alt={track.title} loading="lazy" onError={handleImageError} src={getCoverSrc(track)} />
       <div className="track-title">

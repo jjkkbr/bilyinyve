@@ -1,5 +1,6 @@
 import { classifyBilibiliQuery } from '../server/providers/queryClassifier.js';
 import { searchTracks } from '../server/searchService.js';
+import { getCurrentBilibiliPartIndex } from '../src/services/queueLogic.js';
 import { ProviderError } from '../server/providerError.js';
 
 const cases = [
@@ -43,6 +44,28 @@ assert(
   bilibiliResult.tracks[0].sourceUrl.toUpperCase().includes('BV1XX411C7MD'),
   'Bilibili result should link to source video'
 );
+
+try {
+  const bilibiliSeasonResult = await searchTracks({
+    keyword: 'BV1824y1T7cD',
+    providerId: 'bilibili',
+    limit: 1
+  });
+  const seasonTrack = bilibiliSeasonResult.tracks[0];
+  assert(seasonTrack.parts.length > 1, 'Bilibili season result should expose collection parts');
+  assert(
+    getCurrentBilibiliPartIndex(seasonTrack) === seasonTrack.parts.findIndex((part) => part.bvid === seasonTrack.bv),
+    'Bilibili season result should highlight the requested collection item'
+  );
+} catch (error) {
+  if (
+    !(error instanceof ProviderError) ||
+    !['BILIBILI_SEARCH_RATE_LIMITED', 'BILIBILI_SEARCH_UNAVAILABLE', 'BILIBILI_VIDEO_NOT_FOUND'].includes(error.code)
+  ) {
+    throw error;
+  }
+  console.warn(`Skipping live Bilibili season check: ${error.code}`);
+}
 
 try {
   const bilibiliKeywordResult = await searchTracks({

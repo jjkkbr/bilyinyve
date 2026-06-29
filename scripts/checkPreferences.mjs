@@ -56,21 +56,38 @@ const sanitizedPreferences = sanitizePreferences({
   currentTrack: bilibiliTrack,
   playbackState: sanitizedBilibiliState,
   queue: [bilibiliTrack],
-  history: [nativeTrack]
+  history: [nativeTrack],
+  lyricsByTrackId: {
+    [bilibiliTrack.id]: {
+      source: 'local-lrc',
+      raw: '[00:01.00]Hello BiliWave',
+      type: 'lrc',
+      lines: [{ id: 'line-1', time: 1, text: 'Hello BiliWave' }],
+      offsetMs: 500,
+      updatedAt: '2026-06-15T00:00:00.000Z'
+    }
+  }
 });
 assert(sanitizedPreferences.currentTrack.id === bilibiliTrack.id, 'current Bilibili track should persist');
 assert(sanitizedPreferences.playbackState.trackId === bilibiliTrack.id, 'playback state should persist in preferences');
 assert(sanitizedPreferences.queue[0].id === bilibiliTrack.id, 'Bilibili queue item should persist');
 assert(sanitizedPreferences.history[0].id === nativeTrack.id, 'native history item should persist');
+assert(
+  sanitizedPreferences.lyricsByTrackId[bilibiliTrack.id].lines[0].text === 'Hello BiliWave',
+  'lyrics should persist by track id'
+);
+assert(sanitizedPreferences.lyricsByTrackId[bilibiliTrack.id].offsetMs === 500, 'lyrics offset should persist');
 
 const exportPayload = createPreferencesExport(sanitizedPreferences, { version: '0.1.9' });
 assert(exportPayload.app === 'BiliWave', 'export payload should identify BiliWave');
 assert(exportPayload.schemaVersion === 1, 'export payload should include schema version');
 assert(exportPayload.preferences.queue[0].id === bilibiliTrack.id, 'export payload should persist queue');
+assert(exportPayload.preferences.lyricsByTrackId[bilibiliTrack.id], 'export payload should persist lyrics');
 
 const parsedExport = parsePreferencesExport(JSON.stringify(exportPayload));
 assert(parsedExport.preferences.currentTrack.id === bilibiliTrack.id, 'parsed export should restore current track');
 assert(parsedExport.preferences.playbackState.source === 'bilibili', 'parsed export should restore playback source');
+assert(parsedExport.preferences.lyricsByTrackId[bilibiliTrack.id].type === 'lrc', 'parsed export should restore lyrics');
 
 const parsedLegacyExport = parsePreferencesExport(sanitizedPreferences);
 assert(parsedLegacyExport.preferences.history[0].id === nativeTrack.id, 'legacy preference import should still work');
@@ -85,6 +102,9 @@ assert(clearedQueue.queue.length === 0, 'queue clearing should remove queue');
 const clearedPlayback = clearPreferenceData(sanitizedPreferences, 'playback');
 assert(clearedPlayback.currentTrack === null, 'playback clearing should remove current track');
 assert(clearedPlayback.playbackState.source === 'none', 'playback clearing should reset source');
+
+const clearedLyrics = clearPreferenceData(sanitizedPreferences, 'lyrics');
+assert(Object.keys(clearedLyrics.lyricsByTrackId).length === 0, 'lyrics clearing should remove saved lyrics');
 
 const resetPlaylists = clearPreferenceData(sanitizedPreferences, 'playlists');
 assert(resetPlaylists.playlists.length === 1, 'playlist reset should keep a default playlist');

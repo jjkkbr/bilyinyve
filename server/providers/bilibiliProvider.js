@@ -343,8 +343,9 @@ function toTrack(videoData) {
   const bvid = videoData.bvid || '';
   const aid = videoData.aid ? `av${videoData.aid}` : '';
   const parts = getVideoParts(videoData);
-  const durationSeconds = getDurationSeconds(videoData);
-  const sourceUrl = `${bilibiliVideoBaseUrl}/${bvid || aid}/`;
+  const currentPart = getCurrentVideoPart(videoData, parts);
+  const durationSeconds = currentPart?.durationSeconds || getDurationSeconds(videoData);
+  const sourceUrl = currentPart?.sourceUrl || `${bilibiliVideoBaseUrl}/${bvid || aid}/`;
   const viewCount = Number(videoData.stat?.view || videoData.play || 0);
   const title = cleanSearchText(videoData.title || 'Bilibili 视频');
   const uploader = cleanSearchText(videoData.owner?.name || videoData.author || 'Bilibili UP 主');
@@ -362,14 +363,15 @@ function toTrack(videoData) {
     viewCount,
     views: formatViews(viewCount),
     publishedAt: formatPublishedAt(videoData.pubdate || videoData.ctime),
-    bv: bvid,
-    aid,
-    page: 1,
-    cid: parts[0]?.cid || videoData.cid || null,
+    bv: currentPart?.bvid || bvid,
+    aid: currentPart?.aid || aid,
+    page: currentPart?.page || 1,
+    cid: currentPart?.cid || videoData.cid || null,
     parts,
     sourceUrl,
-    cover: toImageProxyUrl(videoData.pic),
-    rawCover: normalizeBilibiliImageUrl(videoData.pic),
+    cover: currentPart?.cover || toImageProxyUrl(videoData.pic),
+    rawCover: currentPart?.rawCover || normalizeBilibiliImageUrl(videoData.pic),
+    isCollectionPart: Boolean(currentPart?.isCollectionPart),
     audioUrl: '',
     playable: false,
     externalOnly: true,
@@ -405,6 +407,30 @@ function getVideoParts(videoData) {
     .filter((part) => part.title || part.cid);
 }
 
+function getCurrentVideoPart(videoData, parts) {
+  if (!Array.isArray(parts) || parts.length === 0) return null;
+
+  const bvid = normalizeBilibiliBvid(videoData.bvid);
+  if (bvid) {
+    const bvidPart = parts.find((part) => normalizeBilibiliBvid(part.bvid) === bvid);
+    if (bvidPart) return bvidPart;
+  }
+
+  const aid = normalizeBilibiliAid(videoData.aid);
+  if (aid) {
+    const aidPart = parts.find((part) => normalizeBilibiliAid(part.aid) === aid);
+    if (aidPart) return aidPart;
+  }
+
+  const cid = String(videoData.cid || '').trim();
+  if (cid) {
+    const cidPart = parts.find((part) => String(part.cid || '').trim() === cid);
+    if (cidPart) return cidPart;
+  }
+
+  return parts[0] || null;
+}
+
 function getSeasonParts(videoData) {
   const sections = Array.isArray(videoData.ugc_season?.sections) ? videoData.ugc_season.sections : [];
   const episodes = sections.flatMap((section) => (Array.isArray(section.episodes) ? section.episodes : []));
@@ -428,10 +454,25 @@ function getSeasonParts(videoData) {
         durationSeconds,
         cover: toImageProxyUrl(episode.cover || arc.pic),
         rawCover: normalizeBilibiliImageUrl(episode.cover || arc.pic),
-        sourceUrl: bvid ? `${bilibiliVideoBaseUrl}/${bvid}/` : aid ? `${bilibiliVideoBaseUrl}/av${aid}/` : ''
+        sourceUrl: bvid ? `${bilibiliVideoBaseUrl}/${bvid}/` : aid ? `${bilibiliVideoBaseUrl}/av${aid}/` : '',
+        isCollectionPart: true
       };
     })
     .filter((part) => part.title || part.bvid || part.cid);
+}
+
+function normalizeBilibiliBvid(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return '';
+  const match = text.match(/\bbv[0-9a-z]+\b/i);
+  return match ? match[0].toLowerCase() : text.startsWith('bv') ? text : '';
+}
+
+function normalizeBilibiliAid(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return '';
+  const match = text.match(/^av?(\d+)$/i);
+  return match ? `av${match[1]}` : '';
 }
 
 function getDurationSeconds(videoData) {

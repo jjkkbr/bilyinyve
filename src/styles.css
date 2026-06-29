@@ -787,11 +787,28 @@ a {
   font-size: 13px;
 }
 
+.lyrics-heading em {
+  margin-left: auto;
+  color: var(--green-2);
+  font-style: normal;
+  font-size: 12px;
+}
+
 .lyrics-box p {
   margin: 0;
   color: var(--muted);
   font-size: 13px;
   line-height: 1.7;
+  white-space: pre-line;
+}
+
+.lyrics-box .text-button.mini {
+  width: max-content;
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid #d7e5dc;
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
 }
 
 .queue-panel {
@@ -1530,6 +1547,192 @@ input[type="range"] {
   flex-wrap: wrap;
 }
 
+.player-modal-panel.lyrics-panel {
+  width: min(980px, calc(100vw - 92px));
+  grid-template-rows: auto minmax(0, 1fr);
+  background: #fbfcfb;
+}
+
+.lyrics-panel-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.12fr) minmax(320px, 0.88fr);
+  gap: 18px;
+  min-height: 0;
+  padding: 18px;
+}
+
+.lyrics-live,
+.lyrics-editor {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid #dfe7e0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.lyrics-live {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.lyrics-editor {
+  align-content: start;
+  gap: 12px;
+  padding: 14px;
+}
+
+.lyrics-live-head,
+.lyrics-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.lyrics-live-head {
+  padding: 14px;
+  border-bottom: 1px solid #e2e9e4;
+}
+
+.lyrics-live-head div,
+.lyrics-editor-head {
+  min-width: 0;
+}
+
+.lyrics-live-head strong,
+.lyrics-editor-head strong {
+  display: block;
+  color: var(--green);
+  font-size: 15px;
+}
+
+.lyrics-live-head span,
+.lyrics-editor-head span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.lyrics-live-head em {
+  flex: 0 0 auto;
+  color: var(--green-2);
+  font-style: normal;
+  font-size: 12px;
+}
+
+.lyrics-lines {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.lyric-line {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: #607069;
+}
+
+.lyrics-lines.plain .lyric-line {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.lyric-line span {
+  color: #8a9892;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.lyric-line p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.lyric-line.active {
+  color: var(--green);
+  background: #e9f4ee;
+  box-shadow: inset 3px 0 0 var(--green-2);
+}
+
+.lyric-line.active span {
+  color: var(--green-2);
+}
+
+.lyric-line.active p {
+  font-weight: 700;
+}
+
+.lyrics-empty {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  min-height: 280px;
+  padding: 24px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.lyrics-empty strong {
+  color: var(--green);
+}
+
+.lyrics-empty p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.lyrics-offset-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid #e2e9e4;
+}
+
+.lyrics-editor textarea {
+  width: 100%;
+  min-height: 312px;
+  resize: vertical;
+  padding: 12px;
+  color: var(--ink);
+  border: 1px solid #dfe7e0;
+  border-radius: 8px;
+  outline: 0;
+  background: #ffffff;
+  font: inherit;
+  line-height: 1.55;
+}
+
+.lyrics-editor textarea:focus {
+  border-color: #a9cfc0;
+  box-shadow: 0 0 0 3px rgba(0, 122, 95, 0.1);
+}
+
+.lyrics-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lyrics-status {
+  margin: 0;
+  color: var(--green-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .bilibili-part-panel {
   display: grid;
   gap: 10px;
@@ -1601,6 +1804,7 @@ input[type="range"] {
 
 .part-item.active {
   color: var(--green-2);
+  box-shadow: inset 3px 0 0 var(--green-2);
 }
 
 .part-item span,
@@ -2277,5 +2481,17 @@ input[type="range"] {
   .player-modal.audio-drawer {
     right: 300px;
     width: min(560px, calc(100vw - 340px));
+  }
+
+  .player-modal-panel.lyrics-panel {
+    width: min(860px, calc(100vw - 72px));
+  }
+
+  .lyrics-panel-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lyrics-editor textarea {
+    min-height: 220px;
   }
 }

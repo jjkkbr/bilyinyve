@@ -34,6 +34,7 @@ const defaults = {
     source: 'none',
     updatedAt: ''
   },
+  lyricsByTrackId: {},
   query: 'Bilibili 音乐',
   sort: 'relevance',
   duration: 'all'
@@ -144,6 +145,13 @@ export function clearPreferenceData(preferences, dataType) {
     };
   }
 
+  if (dataType === 'lyrics') {
+    return {
+      ...currentPreferences,
+      lyricsByTrackId: {}
+    };
+  }
+
   return currentPreferences;
 }
 
@@ -176,6 +184,7 @@ export function sanitizePreferences(value) {
     desktopSettings: sanitizeDesktopSettings(raw.desktopSettings),
     currentTrack: isTrack(raw.currentTrack) ? raw.currentTrack : null,
     playbackState: sanitizePlaybackState(raw.playbackState),
+    lyricsByTrackId: sanitizeLyricsMap(raw.lyricsByTrackId),
     query: typeof raw.query === 'string' && raw.query.trim() ? raw.query : defaults.query,
     sort: allowedSorts.has(raw.sort) ? raw.sort : defaults.sort,
     duration: allowedDurations.has(raw.duration) ? raw.duration : defaults.duration
@@ -240,6 +249,43 @@ function sanitizePlaylists(value) {
 
 function sanitizeTrackList(value, limit) {
   return Array.isArray(value) ? value.filter(isTrack).slice(0, limit) : [];
+}
+
+function sanitizeLyricsMap(value) {
+  const raw = value && typeof value === 'object' ? value : {};
+  const entries = Object.entries(raw)
+    .filter(([trackId, lyric]) => typeof trackId === 'string' && trackId.trim() && lyric && typeof lyric === 'object')
+    .map(([trackId, lyric]) => {
+      const lines = Array.isArray(lyric.lines)
+        ? lyric.lines
+            .map((line, index) => ({
+              id: typeof line?.id === 'string' ? line.id : `line-${index}`,
+              time: Number.isFinite(Number(line?.time)) ? Number(line.time) : null,
+              text: typeof line?.text === 'string' ? line.text.slice(0, 500) : ''
+            }))
+            .filter((line) => line.text.trim())
+            .slice(0, 500)
+        : [];
+      const rawText = typeof lyric.raw === 'string' ? lyric.raw.slice(0, 80_000) : '';
+
+      if (!rawText && lines.length === 0) return null;
+
+      return [
+        trackId,
+        {
+          source: typeof lyric.source === 'string' ? lyric.source.slice(0, 40) : 'manual',
+          raw: rawText,
+          type: lyric.type === 'lrc' ? 'lrc' : lyric.type === 'text' ? 'text' : lines.some((line) => line.time !== null) ? 'lrc' : 'text',
+          lines,
+          offsetMs: clampNumber(lyric.offsetMs, -30_000, 30_000, 0),
+          updatedAt: typeof lyric.updatedAt === 'string' ? lyric.updatedAt : ''
+        }
+      ];
+    })
+    .filter(Boolean)
+    .slice(0, 500);
+
+  return Object.fromEntries(entries);
 }
 
 function isTrack(value) {

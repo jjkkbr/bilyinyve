@@ -3,8 +3,11 @@ import {
   appendUniqueTracks,
   canPlayFromQueue,
   canPlayInApp,
+  getCurrentBilibiliPartIndex,
+  getNextBilibiliPart,
   getNextQueueTrack,
   getPreviousQueueTrack,
+  getRandomQueueTrack,
   moveQueueTrack,
   prependNewTrack
 } from '../src/services/queueLogic.js';
@@ -29,6 +32,44 @@ const secondBilibiliTrack = {
   externalOnly: true,
   bv: 'BV1zz411c7mZ',
   sourceUrl: 'https://www.bilibili.com/video/BV1zz411c7mZ/'
+};
+
+const multipartBilibiliTrack = {
+  ...bilibiliTrack,
+  id: 'bilibili-BV1xx411c7mD-p1',
+  page: 1,
+  parts: [
+    { page: 1, cid: 1001, title: 'Part 1', duration: '01:00' },
+    { page: 2, cid: 1002, title: 'Part 2', duration: '02:00' },
+    { page: 3, cid: 1003, title: 'Part 3', duration: '03:00' }
+  ]
+};
+
+const seasonBilibiliTrack = {
+  ...bilibiliTrack,
+  id: 'bilibili-BVcollection-p2-BVseason002',
+  title: 'Part 2 collection title',
+  bv: 'BVseason002',
+  page: 1,
+  cid: 1001,
+  sourceUrl: 'https://www.bilibili.com/video/BVseason002/',
+  isCollectionPart: true,
+  parts: [
+    {
+      page: 1,
+      cid: 1001,
+      bvid: 'BVseason001',
+      title: 'Part 1 collection title',
+      sourceUrl: 'https://www.bilibili.com/video/BVseason001/'
+    },
+    {
+      page: 2,
+      cid: 1002,
+      bvid: 'BVseason002',
+      title: 'Part 2 collection title',
+      sourceUrl: 'https://www.bilibili.com/video/BVseason002/'
+    }
+  ]
 };
 
 const invalidTrack = {
@@ -83,6 +124,50 @@ assert(
   getPreviousQueueTrack({ currentTrack: localTrack, queue: queueWithBilibili }).id === bilibiliTrack.id,
   'previous track should wrap from local audio to Bilibili audio'
 );
+assert(
+  getRandomQueueTrack({ currentTrack: null, queue: bulkAppended, random: () => 0.75 }).id === secondBilibiliTrack.id,
+  'shuffle starter should choose from the whole queue instead of always using the first track'
+);
+assert(
+  getNextQueueTrack({ currentTrack: localTrack, mode: 'shuffle', queue: bulkAppended, random: () => 0 }).id === bilibiliTrack.id,
+  'shuffle next should avoid replaying the current track when other tracks exist'
+);
+assert(getNextBilibiliPart(multipartBilibiliTrack).page === 2, 'multipart Bilibili track should advance to next part');
+assert(
+  getCurrentBilibiliPartIndex({ ...multipartBilibiliTrack, page: undefined, cid: 1003 }) === 2,
+  'legacy Bilibili track should locate current part by cid when page is missing'
+);
+assert(
+  getCurrentBilibiliPartIndex({ ...multipartBilibiliTrack, page: 1, cid: 1003 }) === 2,
+  'legacy Bilibili track should prefer cid over stale page data'
+);
+assert(
+  getCurrentBilibiliPartIndex(seasonBilibiliTrack) === 1,
+  'Bilibili collection track should prefer bvid over stale cid and page data'
+);
+assert(
+  getNextBilibiliPart(seasonBilibiliTrack) === null,
+  'last matched Bilibili collection part should not advance to a missing part'
+);
+assert(
+  getCurrentBilibiliPartIndex({ ...multipartBilibiliTrack, page: undefined, cid: null, title: 'Part 2' }) === 1,
+  'legacy Bilibili track should locate current part by title when page is missing'
+);
+assert(
+  getCurrentBilibiliPartIndex({ ...multipartBilibiliTrack, id: 'bilibili-BV1xx411c7mD-p3', page: undefined, cid: null, title: 'Unknown' }) === 2,
+  'legacy Bilibili track should locate current part by id page marker'
+);
+assert(
+  getNextBilibiliPart({
+    ...multipartBilibiliTrack,
+    id: 'bilibili-BV1xx411c7mD-p3',
+    page: 3,
+    cid: 1003,
+    title: 'Part 3'
+  }) === null,
+  'last Bilibili part should not advance to a missing part'
+);
+assert(getNextBilibiliPart(bilibiliTrack) === null, 'single Bilibili track should not have a next part');
 
 console.log('Queue logic checks passed');
 
