@@ -3,6 +3,10 @@ const exportSchemaVersion = 1;
 const allowedModes = new Set(['list', 'single', 'shuffle']);
 const allowedSorts = new Set(['relevance', 'latest', 'views']);
 const allowedDurations = new Set(['all', 'short', 'medium', 'long']);
+const bilibiliVideoBaseUrl = 'https://www.bilibili.com/video';
+const bilibiliVideoUrlPattern = /bilibili\.com\/video\//i;
+const bvidTokenPattern = /\bBV[0-9A-Za-z]{6,20}\b/i;
+const avTokenPattern = /(?:^|[^\w])av(\d+)(?:$|[^\w])/i;
 
 const defaults = {
   selectedProvider: 'bilibili',
@@ -182,7 +186,7 @@ export function sanitizePreferences(value) {
     playlists,
     selectedPlaylistId,
     desktopSettings: sanitizeDesktopSettings(raw.desktopSettings),
-    currentTrack: isTrack(raw.currentTrack) ? raw.currentTrack : null,
+    currentTrack: normalizeSavedTrack(raw.currentTrack),
     playbackState: sanitizePlaybackState(raw.playbackState),
     lyricsByTrackId: sanitizeLyricsMap(raw.lyricsByTrackId),
     query: typeof raw.query === 'string' && raw.query.trim() ? raw.query : defaults.query,
@@ -248,7 +252,17 @@ function sanitizePlaylists(value) {
 }
 
 function sanitizeTrackList(value, limit) {
-  return Array.isArray(value) ? value.filter(isTrack).slice(0, limit) : [];
+  if (!Array.isArray(value)) return [];
+
+  const tracks = [];
+  for (const item of value) {
+    const track = normalizeSavedTrack(item);
+    if (!track) continue;
+    tracks.push(track);
+    if (tracks.length >= limit) break;
+  }
+
+  return tracks;
 }
 
 function sanitizeLyricsMap(value) {
@@ -288,18 +302,144 @@ function sanitizeLyricsMap(value) {
   return Object.fromEntries(entries);
 }
 
-function isTrack(value) {
-  return Boolean(
-    value &&
-      typeof value === 'object' &&
-      typeof value.id === 'string' &&
-      typeof value.title === 'string' &&
-      (typeof value.audioUrl === 'string' || value.externalOnly === true)
-  );
-}
-
 function clampNumber(value, min, max, fallback) {
   const numberValue = Number(value);
   if (!Number.isFinite(numberValue)) return fallback;
   return Math.min(max, Math.max(min, numberValue));
+}
+
+function normalizeSavedTrack(value) {
+  if (!value || typeof value !== 'object') return null;
+
+  const bv =
+    normalizeBilibiliBvid(value.bv) ||
+    normalizeBilibiliBvid(value.bvid) ||
+    extractBilibiliBvid(value.sourceUrl) ||
+    extractBilibiliBvid(value.id);
+  const aid =
+    normalizeBilibiliAid(value.aid) ||
+    extractBilibiliAid(value.sourceUrl) ||
+    normalizeBilibiliAid(value.id);
+  const sourceUrl = normalizeTrackSourceUrl(value.sourceUrl, bv, aid);
+  const isBilibiliTrack = value.externalOnly === true || Boolean(bv || aid || isBilibiliVideoUrl(sourceUrl));
+  const id = normalizeTrackId(value.id, bv, aid);
+  const title = normalizeTrackTitle(value.title, value.rawTitle, isBilibiliTrack);
+
+  if (!id || !title) return null;
+
+  if (isBilibiliTrack) {
+    return normalizeBilibiliSavedTrack(value, {
+      id,
+      title,
+      bv,
+      aid,
+      sourceUrl
+    });
+  }
+
+  if (typeof value.audioUrl !== 'string') return null;
+
+  return {
+    ...value,
+    id,
+    title
+  };
+}
+
+function normalizeBilibiliSavedTrack(value, normalized) {
+  const track = {
+    ...value,
+    id: normalized.id,
+    title: normalized.title,
+    rawTitle: normalizeString(value.rawTitle) || normalized.title,
+    audioUrl: '',
+    playable: false,
+    externalOnly: true
+  };
+  const uploader = normalizeString(value.uploader);
+  const artist = normalizeString(value.artist) || uploader;
+  const viewCount = normalizeOptionalNumber(value.viewCount);
+  const views = normalizeViewsLabel(value.views, viewCount);
+
+  if (normalized.bv) track.bv = normalized.bv;
+  if (normalized.aid) track.aid = normalized.aid;
+  if (normalized.sourceUrl) track.sourceUrl = normalized.sourceUrl;
+  if (uploader) track.uploader = uploader;
+  if (artist) track.artist = artist;
+  if (viewCount !== null) track.viewCount = viewCount;
+  if (views) {
+    track.views = views;
+  } else if (typeof value.views !== 'string') {
+    delete track.views;
+  }
+
+  return track;
+}
+
+function normalizeTrackId(value, bv, aid) {
+  const id = normalizeString(value);
+  if (id) return id;
+  if (bv || aid) return `bilibili-${bv || aid}`;
+  return '';
+}
+
+function normalizeTrackTitle(title, rawTitle, isBilibiliTrack) {
+  return normalizeString(title) || normalizeString(rawTitle) || (isBilibiliTrack ? 'Bilibili video' : '');
+}
+
+function normalizeTrackSourceUrl(value, bv, aid) {
+  const sourceUrl = normalizeString(value);
+  if (sourceUrl) return sourceUrl;
+  if (bv || aid) return `${bilibiliVideoBaseUrl}/${bv || aid}/`;
+  return '';
+}
+
+function normalizeString(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function isBilibiliVideoUrl(value) {
+  return bilibiliVideoUrlPattern.test(String(value || ''));
+}
+
+function normalizeBilibiliBvid(value) {
+  const text = normalizeString(value);
+  if (!text) return '';
+  const match = text.match(bvidTokenPattern);
+  if (match) return `BV${match[0].slice(2)}`;
+  return '';
+}
+
+function extractBilibiliBvid(value) {
+  const match = String(value || '').match(bvidTokenPattern);
+  return match ? `BV${match[0].slice(2)}` : '';
+}
+
+function normalizeBilibiliAid(value) {
+  if (value === null || value === undefined) return '';
+  const text = String(value).trim();
+  if (!text) return '';
+  const match = text.match(/^(?:av)?(\d+)$/i);
+  return match ? `av${match[1]}` : '';
+}
+
+function extractBilibiliAid(value) {
+  const match = String(value || '').match(avTokenPattern);
+  return match ? `av${match[1]}` : '';
+}
+
+function normalizeOptionalNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function normalizeViewsLabel(value, viewCount) {
+  const label = normalizeString(value);
+  if (label && label !== '0') return label;
+
+  const numericValue = Number(value);
+  if (Number.isFinite(numericValue) && numericValue > 0) return String(numericValue);
+  if (viewCount !== null && viewCount > 0) return String(viewCount);
+  return '';
 }

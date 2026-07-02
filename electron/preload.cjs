@@ -4,6 +4,10 @@ contextBridge.exposeInMainWorld('biliwaveDesktop', {
   isDesktop: true,
   toggleMiniMode: () => ipcRenderer.invoke('desktop:toggle-mini-mode'),
   showMainWindow: () => ipcRenderer.invoke('desktop:show-main-window'),
+  minimizeWindow: () => ipcRenderer.invoke('desktop:minimize-window'),
+  toggleMaximizeWindow: () => ipcRenderer.invoke('desktop:toggle-maximize-window'),
+  closeWindow: () => ipcRenderer.invoke('desktop:close-window'),
+  getWindowState: () => ipcRenderer.invoke('desktop:get-window-state'),
   getSettings: () => ipcRenderer.invoke('desktop:get-settings'),
   getAppInfo: () => ipcRenderer.invoke('desktop:get-app-info'),
   getApiUrl: () => ipcRenderer.invoke('desktop:get-api-url'),
@@ -18,5 +22,10 @@ contextBridge.exposeInMainWorld('biliwaveDesktop', {
     const listener = (_event, command) => callback(command);
     ipcRenderer.on('desktop:media-command', listener);
     return () => ipcRenderer.removeListener('desktop:media-command', listener);
+  },
+  onWindowStateChange: (callback) => {
+    const listener = (_event, state) => callback(state);
+    ipcRenderer.on('desktop:window-state', listener);
+    return () => ipcRenderer.removeListener('desktop:window-state', listener);
   }
 });

@@ -8,6 +8,7 @@ import {
   sanitizePreferences,
   savePreferences
 } from '../src/services/preferences.js';
+import { canPlayFromQueue } from '../src/services/queueLogic.js';
 
 const bilibiliTrack = {
   id: 'bilibili-BV1xx411c7mD',
@@ -23,6 +24,42 @@ const nativeTrack = {
   title: 'Native demo',
   audioUrl: 'https://example.test/audio.mp3',
   durationSeconds: 240
+};
+
+const legacyBilibiliUrlTrack = {
+  id: 'legacy-fav-BV1xx411c7mD',
+  title: 'Legacy favorite from old version',
+  sourceUrl: 'https://www.bilibili.com/video/BV1xx411c7mD/',
+  uploader: 'Original UP',
+  artist: 'Original UP',
+  viewCount: 123456,
+  views: '12.3万',
+  cover: 'https://example.test/cover.jpg'
+};
+
+const legacyBilibiliBvidTrack = {
+  id: 'legacy-bvid-only',
+  title: 'Legacy bvid field',
+  bvid: 'BV1zz411c7mZ',
+  uploader: 'BVID UP',
+  views: '8.8万'
+};
+
+const legacyBilibiliAidTrack = {
+  id: 'legacy-av-url',
+  title: 'Legacy av url',
+  sourceUrl: 'https://www.bilibili.com/video/av170001/',
+  uploader: 'AV UP',
+  views: '6.1万'
+};
+
+const legacyBilibiliZeroViewsTrack = {
+  id: 'legacy-zero-views',
+  title: 'Legacy zero views',
+  sourceUrl: 'https://www.bilibili.com/video/BV1yy411c7mY/',
+  uploader: 'Zero View UP',
+  viewCount: 654321,
+  views: '0'
 };
 
 const sanitizedBilibiliState = sanitizePlaybackState({
@@ -77,6 +114,39 @@ assert(
   'lyrics should persist by track id'
 );
 assert(sanitizedPreferences.lyricsByTrackId[bilibiliTrack.id].offsetMs === 500, 'lyrics offset should persist');
+
+const sanitizedLegacyPreferences = sanitizePreferences({
+  currentTrack: legacyBilibiliUrlTrack,
+  queue: [legacyBilibiliBvidTrack, legacyBilibiliZeroViewsTrack],
+  history: [legacyBilibiliAidTrack],
+  playlists: [
+    {
+      id: 'playlist-default',
+      name: 'Legacy favorites',
+      tracks: [legacyBilibiliUrlTrack],
+      createdAt: '2026-06-01T00:00:00.000Z'
+    }
+  ]
+});
+const sanitizedLegacyTrack = sanitizedLegacyPreferences.playlists[0].tracks[0];
+assert(sanitizedLegacyPreferences.currentTrack?.bv === 'BV1xx411c7mD', 'legacy current track should extract BV from source URL');
+assert(sanitizedLegacyPreferences.currentTrack.externalOnly === true, 'legacy current track should become Bilibili audio track');
+assert(sanitizedLegacyTrack.bv === 'BV1xx411c7mD', 'legacy favorite should extract BV from source URL');
+assert(sanitizedLegacyTrack.externalOnly === true, 'legacy favorite should be marked external-only');
+assert(sanitizedLegacyTrack.sourceUrl === legacyBilibiliUrlTrack.sourceUrl, 'legacy favorite source URL should persist');
+assert(sanitizedLegacyTrack.uploader === 'Original UP', 'legacy favorite uploader should persist');
+assert(sanitizedLegacyTrack.artist === 'Original UP', 'legacy favorite artist should persist');
+assert(sanitizedLegacyTrack.views === '12.3万', 'legacy favorite views label should persist');
+assert(sanitizedLegacyTrack.viewCount === 123456, 'legacy favorite view count should persist');
+assert(canPlayFromQueue(sanitizedLegacyTrack) === true, 'legacy favorite should be playable from queue');
+assert(sanitizedLegacyPreferences.queue[0].bv === 'BV1zz411c7mZ', 'legacy bvid field should normalize to bv');
+assert(
+  sanitizedLegacyPreferences.queue[0].sourceUrl === 'https://www.bilibili.com/video/BV1zz411c7mZ/',
+  'legacy bvid track should get a source URL'
+);
+assert(sanitizedLegacyPreferences.queue[1].views === '654321', 'legacy zero views label should fallback to real view count');
+assert(sanitizedLegacyPreferences.history[0].aid === 'av170001', 'legacy av URL should extract aid');
+assert(sanitizedLegacyPreferences.history[0].externalOnly === true, 'legacy av URL should become external-only');
 
 const exportPayload = createPreferencesExport(sanitizedPreferences, { version: '0.1.9' });
 assert(exportPayload.app === 'BiliWave', 'export payload should identify BiliWave');

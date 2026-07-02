@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   ArrowDown,
   ArrowUp,
-  Bell,
   Clock,
   Database,
   Disc3,
@@ -15,6 +14,8 @@ import {
   History,
   Home,
   Library,
+  Maximize2,
+  Minus,
   ListMusic,
   Loader2,
   Mic2,
@@ -329,6 +330,7 @@ function App() {
   const [searchError, setSearchError] = React.useState(null);
   const [settingsStatus, setSettingsStatus] = React.useState('');
   const [desktopSettingsLoaded, setDesktopSettingsLoaded] = React.useState(!desktopApi?.getSettings);
+  const [isWindowMaximized, setIsWindowMaximized] = React.useState(false);
   const [bilibiliAudioTrack, setBilibiliAudioTrack] = React.useState(null);
   const [isBilibiliPanelOpen, setIsBilibiliPanelOpen] = React.useState(false);
   const [bilibiliPlayerRevision, setBilibiliPlayerRevision] = React.useState(0);
@@ -526,6 +528,7 @@ function App() {
         setLoadMoreError('');
         setSearchLimit(requestedLimit);
         setCanLoadMore(false);
+        workspaceRef.current?.scrollTo?.({ top: 0, behavior: 'smooth' });
         if (!preserveStatus) setStatusText(`正在搜索“${trimmed}”`);
       }
 
@@ -710,6 +713,25 @@ function App() {
         setDesktopSettingsLoaded(true);
         setStatusText('桌面设置读取失败');
       });
+  }, []);
+
+  React.useEffect(() => {
+    if (!desktopApi?.getWindowState) return;
+    desktopApi
+      .getWindowState()
+      .then((state) => {
+        setIsWindowMaximized(Boolean(state?.isMaximized));
+      })
+      .catch(() => {
+        setIsWindowMaximized(false);
+      });
+  }, []);
+
+  React.useEffect(() => {
+    if (!desktopApi?.onWindowStateChange) return undefined;
+    return desktopApi.onWindowStateChange((state) => {
+      setIsWindowMaximized(Boolean(state?.isMaximized));
+    });
   }, []);
 
   React.useEffect(() => {
@@ -1115,12 +1137,29 @@ function App() {
       const detailTrack = detailResult.tracks?.[0];
 
       if (!detailTrack) return track;
+      if (track.bv && detailTrack.bv && String(track.bv).toLowerCase() !== String(detailTrack.bv).toLowerCase()) {
+        return track;
+      }
+      const trackAid = String(track.aid || '').replace(/^av/i, '').toLowerCase();
+      const detailAid = String(detailTrack.aid || '').replace(/^av/i, '').toLowerCase();
+      if (trackAid && detailAid && trackAid !== detailAid) {
+        return track;
+      }
+      const trackViewCount = Number(track.viewCount);
       return {
         ...track,
         ...detailTrack,
         id: track.id || detailTrack.id,
         title: track.title || detailTrack.title,
         rawTitle: track.rawTitle || detailTrack.rawTitle,
+        artist: track.artist || detailTrack.artist,
+        uploader: track.uploader || detailTrack.uploader,
+        category: track.category || detailTrack.category,
+        views: track.views || detailTrack.views,
+        viewCount: Number.isFinite(trackViewCount) && trackViewCount > 0 ? trackViewCount : detailTrack.viewCount,
+        bv: track.bv || detailTrack.bv,
+        aid: track.aid || detailTrack.aid,
+        sourceUrl: track.sourceUrl || detailTrack.sourceUrl,
         cover: track.cover || detailTrack.cover,
         rawCover: track.rawCover || detailTrack.rawCover
       };
@@ -1245,6 +1284,28 @@ function App() {
   function toggleMiniMode() {
     desktopApi?.toggleMiniMode?.().catch(() => {
       setStatusText('迷你模式暂不可用');
+    });
+  }
+
+  function minimizeWindow() {
+    desktopApi?.minimizeWindow?.().catch(() => {
+      setStatusText('窗口最小化暂不可用');
+    });
+  }
+
+  function toggleMaximizeWindow() {
+    desktopApi?.toggleMaximizeWindow?.()
+      .then((state) => {
+        setIsWindowMaximized(Boolean(state?.isMaximized));
+      })
+      .catch(() => {
+        setStatusText('窗口缩放暂不可用');
+      });
+  }
+
+  function closeWindow() {
+    desktopApi?.closeWindow?.().catch(() => {
+      setStatusText('窗口关闭暂不可用');
     });
   }
 
@@ -1605,7 +1666,6 @@ function App() {
       'connecting',
       `正在连接 B站官方播放器：${track.title}${nextSeekTime > 0 ? `，从 ${formatTime(nextSeekTime)} 继续` : ''}`
     );
-    setIsBilibiliPanelOpen(true);
   }
 
   function clearBilibiliAudioSource() {
@@ -1733,6 +1793,7 @@ function App() {
   );
 
   const playerProgress = durationSeconds > 0 ? Math.min(100, (currentTime / durationSeconds) * 100) : currentTrack?.externalOnly ? 0 : progress;
+  const titlebarSearchRef = React.useRef(null);
   const selectedPlaylist = playlists.find((playlist) => playlist.id === selectedPlaylistId) || playlists[0];
   const selectedPlaylistTrackIds = React.useMemo(
     () => new Set((selectedPlaylist?.tracks || []).map((track) => track.id)),
@@ -1744,6 +1805,18 @@ function App() {
   const stablePlayTrack = useStableEvent(playTrack);
   const stableRemoveFromQueue = useStableEvent(removeFromQueue);
   const stableRemoveTrackFromPlaylist = useStableEvent(removeTrackFromPlaylist);
+
+  React.useEffect(() => {
+    function handleGlobalSearchShortcut(event) {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'k') return;
+      event.preventDefault();
+      titlebarSearchRef.current?.focus();
+    }
+
+    window.addEventListener('keydown', handleGlobalSearchShortcut);
+    return () => window.removeEventListener('keydown', handleGlobalSearchShortcut);
+  }, []);
+
   const persistentPlaybackSource = (
     <>
       <audio ref={audioRef} src={canPlayInApp(currentTrack) ? currentTrack.audioUrl : undefined} preload="metadata" />
@@ -1826,7 +1899,22 @@ function App() {
       {isMiniMode ? (
         miniPlayer
       ) : (
-        <div className="app-shell">
+        <div className={`app-shell${isWindowMaximized ? ' is-window-maximized' : ''}`}>
+          <DesktopTitleBar
+            appInfo={appInfo}
+            isDesktopApp={isDesktopApp}
+            isMaximized={isWindowMaximized}
+            isLoading={isLoading}
+            query={query}
+            queueCount={queue.length}
+            searchInputRef={titlebarSearchRef}
+            statusText={statusText}
+            onClose={closeWindow}
+            onMaximize={toggleMaximizeWindow}
+            onMinimize={minimizeWindow}
+            onQueryChange={setQuery}
+            onSearch={performSearch}
+          />
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">
@@ -1881,57 +1969,34 @@ function App() {
       </aside>
 
       <main className="workspace" ref={workspaceRef}>
-        <header className="topbar">
-          <form
-            className="search-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              performSearch();
-            }}
-          >
-            <Search size={18} />
-            <input
-              aria-label="搜索 Bilibili 音乐"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索关键词、BV 号或 UP 主"
-            />
-            <button className="primary-button" disabled={isLoading} type="submit">
-              {isLoading ? <Loader2 className="spin" size={16} /> : <Search size={16} />}
-              <span>搜索</span>
-            </button>
-          </form>
-
-          <div className="topbar-actions">
-            <button className="icon-button" type="button" title="筛选">
-              <SlidersHorizontal size={18} />
-            </button>
-            <button className="icon-button" type="button" title="通知">
-              <Bell size={18} />
-            </button>
-          </div>
-        </header>
-
-        <section className="hero-strip">
-          <div className="hero-copy">
-            <p>今日发现</p>
-            <h1>B 站音乐内容，按播放器的节奏整理。</h1>
-          </div>
-          <div className="hero-stat">
-            <Disc3 size={28} />
-            <div>
-              <strong>{results.length}</strong>
-              <span>演示曲目</span>
+        <section className="library-toolbar" aria-label="音乐发现">
+          <div className="library-toolbar-main">
+            <div className="library-title">
+              <p>发现好音乐</p>
+              <h1>音乐，因为你而动</h1>
+              <span>在这里，从 B 站公开视频里发现更多适合收听的音乐内容。</span>
             </div>
-          </div>
-        </section>
+            <div className="library-visual" aria-hidden="true">
+              <div className="library-visual-disc">
+                <Music2 size={104} />
+              </div>
+              <i />
+              <i />
+              <i />
+              <span />
+              <span />
+            </div>
 
-        <section className="service-strip" aria-label="服务状态">
-          <div>
-            <strong>{providerInfo?.name || '本地搜索服务'}</strong>
-            <span>{providerInfo?.description || '正在准备数据源状态'}</span>
           </div>
-          <div className="service-badges">
+
+          <div className="library-toolbar-side">
+            <div className="toolbar-stat">
+              <Disc3 size={17} />
+              <div>
+                <strong>{visibleResults.length}</strong>
+                <span>当前结果</span>
+              </div>
+            </div>
             <label className="provider-picker">
               <SlidersHorizontal size={13} />
               <select
@@ -1946,16 +2011,57 @@ function App() {
                 ))}
               </select>
             </label>
-            <span>{providerInfo?.mode === 'demo' ? '演示模式' : providerInfo?.mode === 'external' ? '外部打开' : '真实数据源'}</span>
-            <span>{providerInfo?.configured === false ? '未配置' : '已配置'}</span>
-            <span>{providerInfo?.canDownload ? '可下载' : '不提供下载'}</span>
-            <span>{cacheInfo?.hit ? '缓存命中' : '实时查询'}</span>
+            <div className="toolbar-badges">
+              <span>{providerInfo?.mode === 'demo' ? '演示' : providerInfo?.mode === 'external' ? '外部' : '实时'}</span>
+              <span>{cacheInfo?.hit ? '缓存' : '在线'}</span>
+            </div>
+            <div className="filters compact">
+              <label>
+                <Filter size={14} />
+                <select
+                  value={sort}
+                  onChange={(event) => {
+                    setSort(event.target.value);
+                    setSearchResetKey((key) => key + 1);
+                  }}
+                >
+                  <option value="relevance">相关度</option>
+                  <option value="latest">发布时间</option>
+                  <option value="views">播放量</option>
+                </select>
+              </label>
+              <label>
+                <Clock size={14} />
+                <select
+                  value={duration}
+                  onChange={(event) => {
+                    setDuration(event.target.value);
+                    setSearchResetKey((key) => key + 1);
+                  }}
+                >
+                  <option value="all">全部时长</option>
+                  <option value="short">4 分钟内</option>
+                  <option value="medium">4-10 分钟</option>
+                  <option value="long">10 分钟以上</option>
+                </select>
+              </label>
+            </div>
           </div>
         </section>
 
         <ApiPortNotice status={appInfo.apiStatus} />
 
         <section className="keyword-row" aria-label="热门关键词">
+          <button
+            className="keyword-chip active"
+            onClick={() => {
+              setQuery('');
+              setActiveNav('discover');
+            }}
+            type="button"
+          >
+            全部
+          </button>
           {featuredKeywords.map((word) => (
             <button
               className="keyword-chip"
@@ -2019,39 +2125,7 @@ function App() {
                     清空历史
                   </button>
                 </div>
-              ) : activeNav === 'settings' ? null : (
-                <div className="filters">
-                <label>
-                  <Filter size={14} />
-                  <select
-                    value={sort}
-                    onChange={(event) => {
-                      setSort(event.target.value);
-                      setSearchResetKey((key) => key + 1);
-                    }}
-                  >
-                    <option value="relevance">相关度</option>
-                    <option value="latest">发布时间</option>
-                    <option value="views">播放量</option>
-                  </select>
-                </label>
-                <label>
-                  <Clock size={14} />
-                  <select
-                    value={duration}
-                    onChange={(event) => {
-                      setDuration(event.target.value);
-                      setSearchResetKey((key) => key + 1);
-                    }}
-                  >
-                    <option value="all">全部时长</option>
-                    <option value="short">4 分钟内</option>
-                    <option value="medium">4-10 分钟</option>
-                    <option value="long">10 分钟以上</option>
-                  </select>
-                </label>
-                </div>
-              )}
+              ) : null}
             </div>
 
             {isLoading ? (
@@ -2105,6 +2179,7 @@ function App() {
                   tracks={visibleResults}
                   currentTrack={currentTrack}
                   favoriteTrackIds={selectedPlaylistTrackIds}
+                  resetScrollToItem={false}
                   resetKey={`search-${searchResetKey}`}
                   scrollContainerRef={workspaceRef}
                   onAdd={stableAddToQueue}
@@ -2493,6 +2568,92 @@ function LyricsPanel({
         </section>
       </div>
     </div>
+  );
+}
+
+function DesktopTitleBar({
+  appInfo,
+  isDesktopApp,
+  isMaximized,
+  isLoading,
+  query,
+  queueCount,
+  searchInputRef,
+  statusText,
+  onClose,
+  onMaximize,
+  onMinimize,
+  onQueryChange,
+  onSearch
+}) {
+  const versionLabel = appInfo?.version ? `v${appInfo.version}` : 'Desktop';
+
+  return (
+    <header className="desktop-titlebar">
+      <div className="titlebar-brand">
+        <div className="titlebar-logo">
+          <Music2 size={16} />
+        </div>
+        <div>
+          <strong>BiliWave</strong>
+          <span>{versionLabel}</span>
+        </div>
+      </div>
+
+      <form
+        className="titlebar-search"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onSearch?.();
+        }}
+      >
+        <button
+          aria-label={isLoading ? '正在搜索' : '搜索'}
+          className="titlebar-search-button"
+          disabled={isLoading}
+          title={isLoading ? '正在搜索' : '搜索'}
+          type="submit"
+        >
+          {isLoading ? <Loader2 className="spin" size={17} /> : <Search size={17} />}
+        </button>
+        <input
+          aria-label="搜索 Bilibili 音乐"
+          ref={searchInputRef}
+          type="search"
+          value={query}
+          onChange={(event) => onQueryChange?.(event.target.value)}
+          placeholder="搜索音乐、歌手、专辑、歌单..."
+        />
+        <span className="titlebar-shortcut" aria-hidden="true">Ctrl K</span>
+      </form>
+
+      <div className="titlebar-status">
+        <div className="titlebar-avatar">
+          <Music2 size={15} />
+        </div>
+        <div>
+          <strong>BiliWave</strong>
+          <span>{queueCount > 0 ? `队列 ${queueCount} 首` : '本地模式'}</span>
+        </div>
+        <em>LOCAL</em>
+      </div>
+
+      {isDesktopApp ? (
+        <div className="window-controls" aria-label="窗口控制">
+          <button onClick={onMinimize} type="button" title="最小化">
+            <Minus size={14} />
+          </button>
+          <button onClick={onMaximize} type="button" title={isMaximized ? '还原' : '最大化'}>
+            <Maximize2 size={13} />
+          </button>
+          <button className="close" onClick={onClose} type="button" title="关闭">
+            <X size={14} />
+          </button>
+        </div>
+      ) : (
+        <div className="window-controls preview" aria-hidden="true" />
+      )}
+    </header>
   );
 }
 
@@ -2928,7 +3089,16 @@ function IconActionButton({ children, className = 'icon-button small', label, on
   );
 }
 
-function VirtualList({ className = '', itemCount, itemHeight, renderItem, overscan = 6, resetKey = '', scrollContainerRef = null }) {
+function VirtualList({
+  className = '',
+  itemCount,
+  itemHeight,
+  renderItem,
+  overscan = 6,
+  resetKey = '',
+  resetScrollToItem = true,
+  scrollContainerRef = null
+}) {
   const scrollRef = React.useRef(null);
   const [viewportHeight, setViewportHeight] = React.useState(0);
   const [scrollTop, setScrollTop] = React.useState(0);
@@ -2978,7 +3148,7 @@ function VirtualList({ className = '', itemCount, itemHeight, renderItem, oversc
     const scrollElement = scrollContainerRef?.current || element;
     if (!element || !scrollElement) return;
 
-    if (usesExternalScroll) {
+    if (usesExternalScroll && resetScrollToItem) {
       const elementRect = element.getBoundingClientRect();
       const scrollRect = scrollElement.getBoundingClientRect();
       const listTop = elementRect.top - scrollRect.top + scrollElement.scrollTop;
@@ -2986,7 +3156,7 @@ function VirtualList({ className = '', itemCount, itemHeight, renderItem, oversc
     } else {
       scrollElement.scrollTop = 0;
     }
-  }, [resetKey, scrollContainerRef, usesExternalScroll]);
+  }, [resetKey, resetScrollToItem, scrollContainerRef, usesExternalScroll]);
 
   function handleScroll(event) {
     if (usesExternalScroll) return;
@@ -3077,6 +3247,7 @@ function TrackTable({
   onFavorite,
   emptyText,
   resetKey = '',
+  resetScrollToItem = true,
   scrollContainerRef = null
 }) {
   if (tracks.length === 0) {
@@ -3094,6 +3265,7 @@ function TrackTable({
       itemCount={tracks.length}
       itemHeight={virtualTrackRowHeight}
       resetKey={resetKey}
+      resetScrollToItem={resetScrollToItem}
       scrollContainerRef={scrollContainerRef}
       renderItem={(index) => (
         <TrackRow

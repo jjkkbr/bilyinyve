@@ -51,6 +51,7 @@ function createMainWindow() {
     minWidth: 1180,
     minHeight: 720,
     backgroundColor: '#edf3ef',
+    frame: false,
     icon: iconPath,
     title: 'BiliWave',
     show: false,
@@ -90,8 +91,8 @@ function createMainWindow() {
 
   mainWindow.on('resize', scheduleSaveWindowBounds);
   mainWindow.on('move', scheduleSaveWindowBounds);
-  mainWindow.on('maximize', scheduleSaveWindowBounds);
-  mainWindow.on('unmaximize', scheduleSaveWindowBounds);
+  mainWindow.on('maximize', handleWindowStateChange);
+  mainWindow.on('unmaximize', handleWindowStateChange);
   mainWindow.on('closed', () => {
     clearTimeout(saveWindowBoundsTimer);
     mainWindow = null;
@@ -159,6 +160,40 @@ ipcMain.handle('desktop:toggle-mini-mode', () => {
 ipcMain.handle('desktop:show-main-window', () => {
   showMainWindow();
 });
+
+ipcMain.handle('desktop:minimize-window', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  mainWindow.minimize();
+  return true;
+});
+
+ipcMain.handle('desktop:toggle-maximize-window', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return {
+      isMaximized: false
+    };
+  }
+
+  if (mainWindow.isMaximized()) {
+    mainWindow.unmaximize();
+  } else {
+    mainWindow.maximize();
+  }
+
+  return {
+    isMaximized: mainWindow.isMaximized()
+  };
+});
+
+ipcMain.handle('desktop:close-window', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  mainWindow.close();
+  return true;
+});
+
+ipcMain.handle('desktop:get-window-state', () => ({
+  isMaximized: Boolean(mainWindow?.isMaximized?.())
+}));
 
 ipcMain.handle('desktop:get-settings', () => desktopSettings);
 
@@ -401,6 +436,11 @@ function scheduleSaveWindowBounds() {
   saveWindowBoundsTimer = setTimeout(saveWindowBounds, 300);
 }
 
+function handleWindowStateChange() {
+  scheduleSaveWindowBounds();
+  sendWindowState();
+}
+
 function saveWindowBounds() {
   if (!mainWindow || mainWindow.isDestroyed() || isMiniMode || !settingsStore || !desktopSettings) return;
   const nextBounds = getCurrentWindowBounds();
@@ -454,6 +494,14 @@ function restoreWindowBounds(bounds) {
 function sendMediaCommand(command) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('desktop:media-command', command);
+  }
+}
+
+function sendWindowState() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('desktop:window-state', {
+      isMaximized: mainWindow.isMaximized()
+    });
   }
 }
 

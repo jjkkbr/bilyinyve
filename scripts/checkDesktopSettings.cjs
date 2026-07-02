@@ -9,6 +9,8 @@ const {
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'biliwave-settings-'));
 const settingsPath = path.join(tempDir, 'desktop-settings.json');
+const electronMainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.cjs'), 'utf8');
+const electronPreloadSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'preload.cjs'), 'utf8');
 
 const savedSettings = saveDesktopSettings(settingsPath, {
   closeToTray: false,
@@ -62,6 +64,14 @@ assert(sanitizedSettings.windowBounds.height === 720, 'invalid window height sho
 assert(sanitizedSettings.windowBounds.x === null, 'invalid window x should fallback');
 assert(sanitizedSettings.windowBounds.y === null, 'invalid window y should fallback');
 assert(sanitizedSettings.windowBounds.isMaximized === false, 'invalid maximized state should fallback');
+
+assert(electronMainSource.includes('frame: false'), 'desktop window should use the custom title bar frame');
+assert(electronMainSource.includes("ipcMain.handle('desktop:minimize-window'"), 'desktop minimize IPC should exist');
+assert(electronMainSource.includes("ipcMain.handle('desktop:toggle-maximize-window'"), 'desktop maximize IPC should exist');
+assert(electronMainSource.includes("ipcMain.handle('desktop:close-window'"), 'desktop close IPC should exist');
+assert(electronPreloadSource.includes('minimizeWindow'), 'preload should expose minimizeWindow');
+assert(electronPreloadSource.includes('toggleMaximizeWindow'), 'preload should expose toggleMaximizeWindow');
+assert(electronPreloadSource.includes('closeWindow'), 'preload should expose closeWindow');
 
 fs.rmSync(tempDir, { recursive: true, force: true });
 console.log('Desktop settings checks passed');
