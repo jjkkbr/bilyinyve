@@ -545,9 +545,13 @@ function App() {
         setProviderInfo(searchResult.provider);
         setCacheInfo(searchResult.cache);
         setSearchLimit(requestedLimit);
+        const hasMoreResults =
+          typeof searchResult.pagination?.hasMore === 'boolean'
+            ? searchResult.pagination.hasMore
+            : nextResults.length >= requestedLimit;
         setCanLoadMore(
           searchResult.provider?.id === 'bilibili' &&
-            nextResults.length >= requestedLimit &&
+            hasMoreResults &&
             requestedLimit < maxSearchLimit
         );
         if (!preserveStatus) {

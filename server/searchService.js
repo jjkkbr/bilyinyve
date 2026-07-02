@@ -43,29 +43,57 @@ export async function searchTracks({ keyword = '', sort = 'relevance', duration 
       provider: toProviderSummary(provider),
       cache: {
         hit: false
+      },
+      pagination: {
+        requestedLimit: safeLimit,
+        resultCount: 0,
+        hasMore: false,
+        fetchedPages: 0
       }
     };
   }
 
   const cached = getCachedSearch(cacheKey);
   if (cached) {
+    const cachedTracks = Array.isArray(cached.tracks) ? cached.tracks : [];
     return {
       ...cached,
+      pagination: cached.pagination || {
+        requestedLimit: safeLimit,
+        resultCount: cachedTracks.length,
+        hasMore: false,
+        fetchedPages: null
+      },
       cache: {
         hit: true
       }
     };
   }
 
-  const providerTracks = await provider.search({
+  const providerResult = await provider.search({
     keyword: provider.id === 'demo' ? normalizedKeyword : trimmedKeyword,
     limit: safeLimit
   });
+  const providerTracks = Array.isArray(providerResult)
+    ? providerResult
+    : Array.isArray(providerResult?.tracks)
+      ? providerResult.tracks
+      : [];
+  const pagination = getSearchPagination({
+    providerResult,
+    providerTracks,
+    requestedLimit: safeLimit
+  });
+  const tracks = sortTracks(filterByDuration(providerTracks, safeDuration), safeSort).slice(0, safeLimit);
   const result = {
-    tracks: sortTracks(filterByDuration(providerTracks, safeDuration), safeSort).slice(0, safeLimit),
+    tracks,
     provider: toProviderSummary(provider),
     cache: {
       hit: false
+    },
+    pagination: {
+      ...pagination,
+      resultCount: tracks.length
     }
   };
 
@@ -77,6 +105,25 @@ function sanitizeResultLimit(value) {
   const numberValue = Number(value);
   if (!Number.isFinite(numberValue)) return defaultResultLimit;
   return Math.min(maxResultLimit, Math.max(1, Math.floor(numberValue)));
+}
+
+function getSearchPagination({ providerResult, providerTracks, requestedLimit }) {
+  const providerPagination =
+    providerResult && !Array.isArray(providerResult) && typeof providerResult === 'object'
+      ? providerResult.pagination
+      : null;
+  const providerHasMore =
+    providerPagination && typeof providerPagination.hasMore === 'boolean'
+      ? providerPagination.hasMore
+      : providerTracks.length > requestedLimit;
+
+  return {
+    requestedLimit,
+    hasMore: Boolean(providerHasMore && requestedLimit < maxResultLimit),
+    fetchedPages: Number.isFinite(Number(providerPagination?.fetchedPages))
+      ? Number(providerPagination.fetchedPages)
+      : null
+  };
 }
 
 function filterByDuration(tracks, duration) {

@@ -30,6 +30,11 @@ export async function searchBilibiliMusic({ keyword, sort = 'relevance', duratio
     source: payload.source || 'unknown',
     provider: payload.provider || null,
     cache: payload.cache || { hit: false },
+    pagination: payload.pagination || {
+      requestedLimit: Number(limit) || 40,
+      resultCount: Array.isArray(payload.tracks) ? payload.tracks.length : 0,
+      hasMore: Array.isArray(payload.tracks) && payload.tracks.length >= Number(limit)
+    },
     complianceNotice: payload.complianceNotice || ''
   };
 }

@@ -23,6 +23,8 @@ const demoResult = await searchTracks({
 });
 assert(demoResult.tracks.length > 0, 'Demo provider should return tracks');
 assert(demoResult.provider.id === 'demo', 'Demo search should report demo provider');
+assert(demoResult.pagination?.requestedLimit === 40, 'Demo search should include requested limit');
+assert(typeof demoResult.pagination?.hasMore === 'boolean', 'Demo search should include hasMore');
 
 const limitedDemoResult = await searchTracks({
   keyword: '音乐',
@@ -30,6 +32,7 @@ const limitedDemoResult = await searchTracks({
   limit: 2
 });
 assert(limitedDemoResult.tracks.length === 2, 'Search service should honor result limit');
+assert(limitedDemoResult.pagination?.hasMore === true, 'Limited demo search should report more results');
 
 const bilibiliResult = await searchTracks({
   keyword: 'https://www.bilibili.com/video/BV1xx411c7mD/',
@@ -74,6 +77,7 @@ try {
     limit: 40
   });
   assert(bilibiliKeywordResult.tracks.length > 0, 'Bilibili keyword search should return public video results');
+  assert(typeof bilibiliKeywordResult.pagination?.hasMore === 'boolean', 'Bilibili keyword search should report hasMore');
   assert(bilibiliKeywordResult.tracks[0].externalOnly === true, 'Bilibili keyword result should be external-only');
   assert(bilibiliKeywordResult.tracks[0].sourceUrl.includes('bilibili.com/video/'), 'Keyword result should link to Bilibili');
 } catch (error) {

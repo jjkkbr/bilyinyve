@@ -67,6 +67,7 @@ export function createApiServer() {
           source: searchResult.provider.id,
           provider: searchResult.provider,
           cache: searchResult.cache,
+          pagination: searchResult.pagination,
           complianceNotice: searchResult.provider.complianceNotice,
           tracks: absolutizeTrackAssets(searchResult.tracks, apiOrigin)
         });

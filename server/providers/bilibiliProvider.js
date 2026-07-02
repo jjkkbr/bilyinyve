@@ -44,7 +44,14 @@ export const bilibiliProvider = {
     }
 
     const videoData = await fetchVideoMetadata(query);
-    return [toTrack(videoData)];
+    return {
+      tracks: [toTrack(videoData)],
+      pagination: {
+        requestedLimit: 1,
+        hasMore: false,
+        fetchedPages: 1
+      }
+    };
   }
 };
 
@@ -73,12 +80,15 @@ async function searchPublicVideos(keyword, limit = 40) {
   const pageCount = Math.min(maxBilibiliSearchPages, Math.ceil(safeLimit / bilibiliSearchPageSize));
   const results = [];
   let firstPageError = null;
+  let fetchedPages = 0;
+  let hasMore = false;
 
   for (let page = 1; page <= pageCount && results.length < safeLimit; page += 1) {
     let payload;
     try {
       payload = await fetchSearchPage(keyword, page);
     } catch (error) {
+      hasMore = false;
       if (page === 1 || results.length === 0) {
         firstPageError = error;
         break;
@@ -86,18 +96,48 @@ async function searchPublicVideos(keyword, limit = 40) {
       break;
     }
     const pageResults = Array.isArray(payload.data?.result) ? payload.data.result : [];
+    fetchedPages = page;
+    hasMore = getSearchPageHasMore(payload, page, pageResults);
     results.push(...pageResults);
-    if (pageResults.length === 0) break;
+    if (pageResults.length === 0) {
+      hasMore = false;
+      break;
+    }
   }
 
   const apiTracks = mapVideoSearchResultsToTracks(results, safeLimit);
-  if (apiTracks.length > 0) return apiTracks;
+  if (apiTracks.length > 0) {
+    return {
+      tracks: apiTracks,
+      pagination: {
+        requestedLimit: safeLimit,
+        hasMore,
+        fetchedPages
+      }
+    };
+  }
 
   const fallbackTracks = await searchPublicVideosFromHtml(keyword, safeLimit);
-  if (fallbackTracks.length > 0) return fallbackTracks;
+  if (fallbackTracks.length > 0) {
+    return {
+      tracks: fallbackTracks,
+      pagination: {
+        requestedLimit: safeLimit,
+        hasMore: false,
+        fetchedPages: 0
+      }
+    };
+  }
 
   if (firstPageError) throw firstPageError;
-  return [];
+  return {
+    tracks: [],
+    pagination: {
+      requestedLimit: safeLimit,
+      hasMore: false,
+      fetchedPages
+    }
+  };
 }
 
 function mapVideoSearchResultsToTracks(results, limit) {
@@ -150,6 +190,20 @@ async function fetchSearchPage(keyword, page) {
   }
 
   return payload;
+}
+
+function getSearchPageHasMore(payload, page, pageResults) {
+  const data = payload?.data && typeof payload.data === 'object' ? payload.data : {};
+  const pageInfo = data.pageinfo?.video && typeof data.pageinfo.video === 'object' ? data.pageinfo.video : {};
+  const numPages = Number(data.numPages ?? pageInfo.numPages);
+  if (Number.isFinite(numPages) && numPages > 0) return page < numPages;
+
+  const totalResults = Number(data.numResults ?? pageInfo.numResults);
+  if (Number.isFinite(totalResults) && totalResults > 0) {
+    return page * bilibiliSearchPageSize < totalResults;
+  }
+
+  return Array.isArray(pageResults) && pageResults.length >= bilibiliSearchPageSize;
 }
 
 async function searchPublicVideosFromHtml(keyword, limit) {
