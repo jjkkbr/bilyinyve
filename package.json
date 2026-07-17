@@ -1,6 +1,6 @@
 {
   "name": "bilibili-music-player",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "BiliWave PC desktop music player prototype for Bilibili music discovery.",
   "author": "BiliWave",
   "private": true,

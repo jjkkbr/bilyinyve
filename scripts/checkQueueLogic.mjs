@@ -132,6 +132,33 @@ assert(
   getNextQueueTrack({ currentTrack: localTrack, mode: 'shuffle', queue: bulkAppended, random: () => 0 }).id === bilibiliTrack.id,
   'shuffle next should avoid replaying the current track when other tracks exist'
 );
+
+const longQueue = Array.from({ length: 10 }, (_, index) => ({
+  id: `queue-track-${index + 1}`,
+  title: `Queue track ${index + 1}`,
+  externalOnly: true,
+  bv: `BVqueue${index + 1}`,
+  sourceUrl: `https://www.bilibili.com/video/BVqueue${index + 1}/`
+}));
+const queuePartTrack = {
+  ...longQueue[7],
+  id: `${longQueue[7].id}-p3-BVqueue8`,
+  parentId: longQueue[7].id,
+  page: 3,
+  title: 'Queue track 8 / Part 3'
+};
+assert(
+  getNextQueueTrack({ currentTrack: queuePartTrack, mode: 'list', queue: longQueue }).id === longQueue[8].id,
+  'next track after the last part of queue item 8 should continue to queue item 9'
+);
+assert(
+  getPreviousQueueTrack({ currentTrack: queuePartTrack, queue: longQueue }).id === longQueue[6].id,
+  'previous track from a Bilibili part should use the parent queue position'
+);
+assert(
+  getRandomQueueTrack({ currentTrack: queuePartTrack, queue: longQueue, random: () => 0.77 }).id !== longQueue[7].id,
+  'shuffle should avoid replaying the parent queue item while one of its parts is current'
+);
 assert(getNextBilibiliPart(multipartBilibiliTrack).page === 2, 'multipart Bilibili track should advance to next part');
 assert(
   getCurrentBilibiliPartIndex({ ...multipartBilibiliTrack, page: undefined, cid: 1003 }) === 2,

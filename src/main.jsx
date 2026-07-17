@@ -78,7 +78,7 @@ const featuredKeywords = ['洛天依', '周杰伦 翻唱', '游戏 OST', 'city p
 const initialSearchLimit = 40;
 const searchLoadMoreStep = 20;
 const maxSearchLimit = 100;
-const virtualTrackRowHeight = 79;
+const virtualTrackRowHeight = 72;
 const virtualQueueRowHeight = 74;
 const playbackPreferenceSaveIntervalMs = 10_000;
 const bilibiliAudibleStartupCheckMs = 1_000;
@@ -128,6 +128,7 @@ function createBilibiliPartTrack(track, part) {
   return {
     ...track,
     id: `${baseId}-p${page}-${bvid || aid || ''}`,
+    queueParentId: track.queueParentId || track.id || baseId,
     parentId: baseId,
     title,
     rawTitle: title,
@@ -3264,26 +3265,29 @@ function TrackTable({
   }
 
   return (
-    <VirtualList
-      className="track-table virtual-track-table"
-      itemCount={tracks.length}
-      itemHeight={virtualTrackRowHeight}
-      resetKey={resetKey}
-      resetScrollToItem={resetScrollToItem}
-      scrollContainerRef={scrollContainerRef}
-      renderItem={(index) => (
-        <TrackRow
-          currentTrackId={currentTrack?.id}
-          favoriteTrackIds={favoriteTrackIds}
-          index={index}
-          key={tracks[index].id}
-          onAdd={onAdd}
-          onFavorite={onFavorite}
-          onPlay={onPlay}
-          track={tracks[index]}
-        />
-      )}
-    />
+    <div className="track-table-wrap">
+      <TrackTableHeader />
+      <VirtualList
+        className="track-table virtual-track-table"
+        itemCount={tracks.length}
+        itemHeight={virtualTrackRowHeight}
+        resetKey={resetKey}
+        resetScrollToItem={resetScrollToItem}
+        scrollContainerRef={scrollContainerRef}
+        renderItem={(index) => (
+          <TrackRow
+            currentTrackId={currentTrack?.id}
+            favoriteTrackIds={favoriteTrackIds}
+            index={index}
+            key={tracks[index].id}
+            onAdd={onAdd}
+            onFavorite={onFavorite}
+            onPlay={onPlay}
+            track={tracks[index]}
+          />
+        )}
+      />
+    </div>
   );
 }
 
@@ -3308,28 +3312,45 @@ function PlaylistDetail({ playlist, currentTrack, onPlay, onAdd, onRemove, scrol
   }
 
   return (
-    <VirtualList
-      className="track-table virtual-track-table"
-      itemCount={playlist.tracks.length}
-      itemHeight={virtualTrackRowHeight}
-      resetKey={playlist.id}
-      scrollContainerRef={scrollContainerRef}
-      renderItem={(index) => {
-        const track = playlist.tracks[index];
+    <div className="track-table-wrap">
+      <TrackTableHeader />
+      <VirtualList
+        className="track-table virtual-track-table"
+        itemCount={playlist.tracks.length}
+        itemHeight={virtualTrackRowHeight}
+        resetKey={playlist.id}
+        scrollContainerRef={scrollContainerRef}
+        renderItem={(index) => {
+          const track = playlist.tracks[index];
 
-        return (
-          <PlaylistTrackRow
-            currentTrackId={currentTrack?.id}
-            index={index}
-            key={track.id}
-            onAdd={onAdd}
-            onPlay={onPlay}
-            onRemove={onRemove}
-            track={track}
-          />
-        );
-      }}
-    />
+          return (
+            <PlaylistTrackRow
+              currentTrackId={currentTrack?.id}
+              index={index}
+              key={track.id}
+              onAdd={onAdd}
+              onPlay={onPlay}
+              onRemove={onRemove}
+              track={track}
+            />
+          );
+        }}
+      />
+    </div>
+  );
+}
+
+function TrackTableHeader() {
+  return (
+    <div className="track-table-header" aria-hidden="true">
+      <span />
+      <span />
+      <span>音乐</span>
+      <span>分区</span>
+      <span>播放</span>
+      <span>时长</span>
+      <span>操作</span>
+    </div>
   );
 }
 

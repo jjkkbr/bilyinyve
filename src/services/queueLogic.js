@@ -53,7 +53,7 @@ export function moveQueueTrack(items, trackId, direction) {
 export function getNextQueueTrack({ currentTrack, mode, queue, random = Math.random }) {
   if (!Array.isArray(queue) || queue.length === 0) return null;
 
-  const currentIndex = currentTrack ? queue.findIndex((item) => item.id === currentTrack.id) : -1;
+  const currentIndex = getCurrentQueueTrackIndex({ currentTrack, queue });
 
   if (mode === 'shuffle') {
     return getRandomQueueTrack({ currentTrack, queue, random });
@@ -69,16 +69,32 @@ export function getNextQueueTrack({ currentTrack, mode, queue, random = Math.ran
 export function getRandomQueueTrack({ currentTrack, queue, random = Math.random }) {
   if (!Array.isArray(queue) || queue.length === 0) return null;
 
+  const currentIndex = getCurrentQueueTrackIndex({ currentTrack, queue });
   const candidates =
-    currentTrack && queue.length > 1 ? queue.filter((item) => item.id !== currentTrack.id) : queue;
+    currentTrack && queue.length > 1
+      ? queue.filter((item, index) => index !== currentIndex && !isSameQueueIdentity(item, currentTrack))
+      : queue;
   const safeRandom = Math.min(0.999999, Math.max(0, Number(random()) || 0));
   return candidates[Math.floor(safeRandom * candidates.length)] || candidates[0] || null;
 }
 
 export function getPreviousQueueTrack({ currentTrack, queue }) {
   if (!Array.isArray(queue) || queue.length === 0) return null;
-  const currentIndex = currentTrack ? queue.findIndex((item) => item.id === currentTrack.id) : 0;
+  const currentIndex = currentTrack ? getCurrentQueueTrackIndex({ currentTrack, queue }) : 0;
   return queue[(currentIndex - 1 + queue.length) % queue.length];
+}
+
+export function getCurrentQueueTrackIndex({ currentTrack, queue }) {
+  if (!currentTrack || !Array.isArray(queue) || queue.length === 0) return -1;
+
+  const exactIds = getQueueIdentityValues(currentTrack);
+  const exactIndex = queue.findIndex((item) => hasSharedIdentity(getQueueIdentityValues(item), exactIds));
+  if (exactIndex >= 0) return exactIndex;
+
+  const baseIds = getQueueBaseIdentityValues(currentTrack);
+  if (baseIds.size === 0) return -1;
+
+  return queue.findIndex((item) => hasSharedIdentity(getQueueBaseIdentityValues(item), baseIds));
 }
 
 export function getNextBilibiliPart(track) {
@@ -144,6 +160,37 @@ export function getCurrentBilibiliPartIndex(track) {
 function normalizeComparableValue(value) {
   if (value === null || value === undefined) return '';
   return String(value).trim().toLowerCase();
+}
+
+function isSameQueueIdentity(item, currentTrack) {
+  return hasSharedIdentity(getQueueIdentityValues(item), getQueueIdentityValues(currentTrack)) ||
+    hasSharedIdentity(getQueueBaseIdentityValues(item), getQueueBaseIdentityValues(currentTrack));
+}
+
+function getQueueIdentityValues(track) {
+  return new Set(
+    [track?.id, track?.queueParentId, track?.parentId]
+      .map(normalizeComparableValue)
+      .filter(Boolean)
+  );
+}
+
+function getQueueBaseIdentityValues(track) {
+  return new Set(
+    [track?.id, track?.queueParentId, track?.parentId]
+      .map(normalizeComparableValue)
+      .map(stripBilibiliPartSuffix)
+      .filter(Boolean)
+  );
+}
+
+function hasSharedIdentity(leftValues, rightValues) {
+  if (!leftValues?.size || !rightValues?.size) return false;
+  return [...leftValues].some((value) => rightValues.has(value));
+}
+
+function stripBilibiliPartSuffix(value) {
+  return normalizeComparableValue(value).replace(/-p\d+(?:-[^-]+)?$/i, '');
 }
 
 function getBilibiliBvidValues(item) {
